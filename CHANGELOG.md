@@ -16,5 +16,17 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
   de Argus/IRIS). Dados reais migrados (estado de animes, token do MAL,
   capas), verificados por checksum antes de remover da GAIA.
 
-### Pendente (Fase 2)
-- UI própria (hoje só existe, desativada, dentro do Painel da GAIA).
+- **Fase 2 concluída (2026-08-24)** - ponte HTTP (`moirai/api_bridge.py`)
+  expandida com todos os endpoints que a UI rica da GAIA (`ui/qt_modais/
+  animes.py`) precisa: marcar interesse, remover, baixar pendentes/
+  selecionados, editar episódio manualmente, renomear biblioteca,
+  sincronizar biblioteca sob demanda, casamento manual/automático com o
+  MAL, e um endpoint de config genérico (`GET`/`POST /config`) que
+  substitui os 14 pares de getter/setter que existiam em `brain_store.py`
+  da GAIA antes da extração. Botão "🎬 Assistente de Animes" do Painel da
+  GAIA restaurado - mesma UI de sempre, agora falando por HTTP. 2 mudanças
+  de contrato reais (mudança de processo exigia): capa do anime vira bytes
+  (`GET /anime/capa/<chave>`, não mais caminho de arquivo local) e assistir
+  episódio (`POST /anime/assistir_chave/<chave>`) roda o player e monitora
+  tudo dentro do próprio MOIRAI, já que é quem tem acesso ao disco de
+  downloads.

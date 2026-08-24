@@ -64,9 +64,8 @@ explícitos `/adicionar_anime`, `/verificar_animes`, `/status_anime`,
 
 ## Estado da extração (2026-08-24)
 
-Fase 1 concluída - motor completo migrado e rodando sozinho, com paridade
-funcional total pro que a GAIA fazia antes (mesmos dados reais migrados:
-estado dos animes, token do MAL, capas). Fase 2 (pendente) é reescrever a
-UI rica de gerenciamento (marcar interesse, editar episódios manualmente,
-casamento manual com MAL, etc. - hoje só existe, desativada, em `ui/
-qt_modais/animes.py` no repo da GAIA) como interface própria do MOIRAI.
+Completa - motor rodando sozinho (Fase 1) e a UI rica de gerenciamento no
+Painel da GAIA (`ui/qt_modais/animes.py` - marcar interesse, editar
+episódios manualmente, renomear biblioteca, casamento com MAL) reescrita
+como cliente HTTP (Fase 2), com paridade funcional total pro que existia
+antes da extração. Validado de ponta a ponta com dados reais.
