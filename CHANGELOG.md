@@ -42,3 +42,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
   episódio (`POST /anime/assistir_chave/<chave>`) roda o player e monitora
   tudo dentro do próprio MOIRAI, já que é quem tem acesso ao disco de
   downloads.
+
+- **Categoria "🎬 Anime Tracker" do IRIS lista só "Para assistir" (2026-08-24)** -
+  novo endpoint `GET /anime/para_assistir` (`obter_titulos_para_assistir`)
+  filtra pra só quem já tem episódio baixado pronto, junto com `chave`/
+  `capa_url` de cada um - antes listava todo "tenho_interesse", inclusive
+  sem nada baixado ainda, o que era um clique morto no popup (sem seletor de
+  episódio lá). Cada anime também ganhou a própria capa como ícone no popup
+  em vez de um emoji genérico (trabalho do lado do IRIS, ver `CHANGELOG.md`
+  dele).
