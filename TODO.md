@@ -1,34 +1,21 @@
 # TODO - Project MOIRAI
 
-## Fase 2 - UI própria
+## Extração completa (Fases 1 e 2, 2026-08-24)
 
-**Prioridade:** Alta | **Complexidade:** Alta | **Status:** 📋 Não iniciado
+Motor + UI rica totalmente migrados da GAIA, validados de ponta a ponta
+com dados reais. Ver `CHANGELOG.md`/`ARQUITETURA.md` pro detalhe completo.
+Nada bloqueado no momento - próximos itens são melhorias, não pendências
+da extração:
 
-Reescrever `ui/qt_modais/animes.py` (repo da GAIA, ~1100 linhas, hoje
-desativado no Painel) como interface própria do MOIRAI - janela/bandeja
-próprias (mesmo padrão do IRIS, `iris/ui/settings_window.py`) ou cliente
-HTTP fino que fala com a ponte já existente (`moirai/api_bridge.py`).
-Precisa de ~20 endpoints novos além dos que já existem hoje (marcar
-interesse, editar episódio manualmente, casamento manual com MAL/AniList,
-renomear biblioteca, seletor de episódios pra baixar seletivamente - ver
-lista completa de chamadas em `ARQUITETURA.md` da GAIA/histórico do PR de
-extração).
-
-## Registro no "🧩 Integrações" da GAIA
-
-**Prioridade:** Média | **Complexidade:** Baixa | **Status:** 📋 Não iniciado
-
-`atualizacao.INTEGRACOES_OPCIONAIS`/`PROJETOS_RASTREADOS` (repo da GAIA)
-ainda não tem entrada pro MOIRAI (só Argus/IRIS) - falta `verificar_versao_
-moirai()` e a entrada no dict, mesmo padrão do IRIS (`atualizar_repo_git_
-local`, tipo "processo").
-
-## Limpeza de código morto na GAIA
-
-**Prioridade:** Baixa | **Complexidade:** Baixa | **Status:** 📋 Não iniciado
-
-`brain_store.py` (repo da GAIA) ainda tem as 14 funções getter/setter que
-`anime_tracker.py` usava antes da extração (agora substituídas por
-`moirai/config.py`) - ficaram como código morto, não removidas na Fase 1
-por segurança (arquivo grande, risco desproporcional pra um cleanup de
-baixo impacto).
+- **Pasta de downloads configurável no popup do IRIS** (`iris_plugin_
+  moirai`, prioridade baixa) - o Menu Radial original tinha um item "📁
+  Abrir pasta de downloads de animes" que o provider ainda não expõe;
+  precisaria de mais um endpoint `GET /pasta_downloads`, ou aceitar que
+  esse item específico não faz sentido fora do processo local da GAIA/
+  MOIRAI.
+- **Interface própria (janela/bandeja)** - hoje a única UI é a que já
+  existia (`ui/qt_modais/animes.py`, no Painel da GAIA, agora como cliente
+  HTTP) - o MOIRAI em si roda sem janela nenhuma. Uma interface própria
+  (mesmo padrão do IRIS, `iris/ui/settings_window.py`) só faria sentido se
+  um dia alguém quiser gerenciar animes sem a GAIA aberta - não é uma
+  necessidade conhecida hoje, registrado só como ideia futura.

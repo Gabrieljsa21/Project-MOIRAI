@@ -69,15 +69,44 @@ linhas) não precisou de nenhuma outra mudança.
   estiver rodando (nunca trava o MOIRAI esperando por um aviso que ninguém
   vai ouvir).
 
-## O que NÃO foi migrado ainda (Fase 2, pendente)
+## Fase 2 (2026-08-24) - UI rica migrada
 
 A UI rica do Painel da GAIA (`ui/qt_modais/animes.py`, ~1100 linhas -
 abas/sub-abas, agrupamento por temporada, edição manual de episódios,
-casamento manual com MAL, seletor de episódios pra baixar seletivamente)
-ainda não foi reescrita como cliente HTTP - está desativada no Painel da
-GAIA (mensagem "temporariamente indisponível") até isso acontecer. `POST /
-anime/adicionar` hoje cai direto no fallback "baixa tudo que já foi
-lançado" (sem o seletor de episódios, que dependia da GUI Qt da GAIA).
+casamento manual com MAL) foi reescrita como cliente HTTP - o botão "🎬
+Assistente de Animes" do Painel voltou a funcionar, sem mudança nenhuma
+visível pro usuário. Endpoints novos em `moirai/api_bridge.py`:
+`marcar_interesse`, `remover`, `baixar_pendentes`, `baixar_episodios_
+selecionados`, `definir_ultimo_lancado/baixado/assistido`, `renomear_
+biblioteca`, `sincronizar_biblioteca`, `assistir_chave/<chave>`,
+`temporada_atual`, `capa/<chave>` (bytes, ver abaixo), config genérico
+(`GET`/`POST /config`) e os 4 endpoints `/mal/*` de casamento manual.
+
+**2 mudanças de contrato reais** (não só troca de import - a mudança de
+processo exigia):
+- **Capa do anime**: `capa_local_cacheada`/`obter_capa_local` (devolviam
+  caminho de arquivo local - sem sentido do lado da GAIA, que não tem
+  acesso ao disco do MOIRAI) viraram `GET /anime/capa/<chave>?url=...`,
+  que devolve os BYTES da imagem direto (`QPixmap.loadFromData()` no
+  cliente, sem nenhum arquivo local necessário do lado de quem consome).
+- **Assistir episódio**: `assistir_e_monitorar` (abria o player E
+  monitorava a janela pra saber quando terminou, na mesma chamada de quem
+  pedia) virou `POST /anime/assistir_chave/<chave>` - o MOIRAI resolve o
+  episódio, abre o player e monitora TUDO no próprio processo dele (é
+  quem tem acesso ao disco de downloads/player local), devolvendo só
+  sucesso/erro. Efeito colateral aceito: o card no Painel da GAIA não se
+  auto-atualiza mais sozinho quando termina de assistir (o aviso "movido
+  pra pasta de assistidos" continua chegando pelo Discord, via o webhook
+  de sempre - `POST /moirai/episodio_assistido`).
+- `POST /anime/adicionar` também mudou - não dispara mais o download
+  sozinho (isso virou `POST /anime/baixar_pendentes`, uma chamada
+  separada), pra permitir que a UI rica decida entre baixar tudo pendente
+  ou abrir o seletor de episódios (`baixar_episodios_selecionados`) antes
+  de disparar qualquer coisa.
+
+Validado de ponta a ponta com dados reais: ~90 animes rastreados, capa
+real baixada como bytes (23KB), roundtrip de config testado, `renomear_
+biblioteca` (dry-run) confirmado seguro.
 
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
