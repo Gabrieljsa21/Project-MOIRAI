@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="moirai/assets/logo_moirai.png" alt="Moirai" width="180">
+</p>
+
 # Project-MOIRAI
 
 Gerenciador de animes/episódios - acompanha lançamentos novos em
