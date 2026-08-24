@@ -45,10 +45,12 @@ linhas) não precisou de nenhuma outra mudança.
 ## "IRIS → satélite (ação direta)", ver TODO.md da GAIA)
 
 - **IRIS → MOIRAI (ação direta, sem IA no meio)**: plugin `iris_plugin_moirai`
-  (repo do IRIS) fala com `GET /anime/tenho_interesse`, `POST /anime/
-  adicionar`, `POST /anime/assistir/<titulo>` - a categoria "🎬 Anime
-  Tracker" do popup só aparece se o MOIRAI estiver respondendo (TCP connect
-  simples, nunca cacheado).
+  (repo do IRIS) fala com `GET /anime/para_assistir` (2026-08-24 - só quem
+  já tem episódio baixado pronto, com `chave`/`capa_url` junto pro IRIS
+  cachear a capa como ícone; ver `obter_titulos_para_assistir` abaixo),
+  `GET /anime/capa/<chave>?url=...`, `POST /anime/adicionar`, `POST /anime/
+  assistir/<titulo>` - a categoria "🎬 Anime Tracker" do popup só aparece se
+  o MOIRAI estiver respondendo (TCP connect simples, nunca cacheado).
 - **GAIA → MOIRAI (poll, 1x/dia)**: o Agendador Diário da GAIA consulta
   `GET /checagem_diaria` na hora configurada - a GAIA decide QUANDO
   perguntar (fila/lock com os outros avisos proativos) e O QUE DIZER no
@@ -107,6 +109,20 @@ processo exigia):
 Validado de ponta a ponta com dados reais: ~90 animes rastreados, capa
 real baixada como bytes (23KB), roundtrip de config testado, `renomear_
 biblioteca` (dry-run) confirmado seguro.
+
+## Anime Tracker do IRIS: só "Para assistir" + capa (2026-08-24, mesmo dia)
+
+Pedido do usuário: a lista da categoria "🎬 Anime Tracker" do Menu Radial
+(IRIS) estava mostrando TODO "tenho_interesse", inclusive quem ainda não
+tinha nada baixado - clicar num desses era um clique morto (o IRIS não tem
+seletor de episódio, só abre o 1º baixado direto). `obter_titulos_para_
+assistir` (`moirai/core/anime_tracker.py`) reaproveita `tem_episodio_
+disponivel_para_assistir` (já existia, usada pela aba "▶️ Disponíveis" do
+Painel) pra filtrar só quem tem episódio `"baixado"` de verdade, e devolve
+`chave`/`capa_url` junto (não só o título) - novo endpoint `GET /anime/
+para_assistir`. O download/cache da capa em si continua 100% do lado do
+IRIS (`GET /anime/capa/<chave>?url=...` já existia, ver Fase 2 acima) -
+nenhuma mudança no MOIRAI além de expor os dados certos.
 
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 

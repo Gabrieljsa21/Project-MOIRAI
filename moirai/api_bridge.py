@@ -3,8 +3,9 @@
 na GAIA (`BaseHTTPRequestHandler` simples, sem framework). 3 consumidores:
 
 - **Project-IRIS** (`iris_plugin_moirai`, categoria "🎬 Anime Tracker" do popup) -
-  `GET /anime/tenho_interesse`, `POST /anime/adicionar` + `POST /anime/
-  baixar_pendentes`, `POST /anime/assistir/<titulo>`.
+  `GET /anime/para_assistir` (título+chave+capa_url, só quem já tem episódio
+  baixado), `GET /anime/capa/<chave>?url=<capa_url>`, `POST /anime/adicionar`
+  + `POST /anime/baixar_pendentes`, `POST /anime/assistir/<titulo>`.
 - **GAIA, Agendador Diário (poll 1x/dia)** - `GET /checagem_diaria`,
   `GET`/`POST /ultima_checagem_diaria`. A GAIA decide QUANDO chamar e O QUE
   DIZER no Discord - aqui só devolve o dado bruto.
@@ -69,6 +70,14 @@ class _API(BaseHTTPRequestHandler):
             self._responder_json(titulos)
         elif caminho == "/anime/titulos_e_chaves":
             self._responder_json(list(anime_tracker.obter_titulos_tenho_interesse()))
+        elif caminho == "/anime/para_assistir":
+            # 🔥 2026-08-24, categoria "🎬 Anime Tracker" do Menu Radial (IRIS) -
+            # só quem já tem episódio baixado pronto, com a capa junto (o "🎬
+            # <título>" clicado ali abre o episódio direto, sem seletor).
+            self._responder_json([
+                {"titulo": titulo, "chave": chave, "capa_url": capa_url}
+                for titulo, chave, capa_url in anime_tracker.obter_titulos_para_assistir()
+            ])
         elif caminho == "/anime/animes_rastreados":
             self._responder_json(dict(anime_tracker.obter_animes_rastreados()))
         elif caminho == "/anime/estados_lancamento_anilist":

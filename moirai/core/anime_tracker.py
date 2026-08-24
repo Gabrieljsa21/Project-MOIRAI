@@ -1087,6 +1087,23 @@ def obter_titulos_tenho_interesse():
     return [(r["titulo"], c) for c, r in animes.items() if r.get("interesse") == "tenho_interesse"]
 
 
+def obter_titulos_para_assistir():
+    """[(titulo, chave, capa_url), ...] só pros "tenho_interesse" que JÁ TÊM
+    pelo menos 1 episódio baixado disponível agora (ver
+    tem_episodio_disponivel_para_assistir) - usado pela categoria "🎬 Anime
+    Tracker" do Menu Radial (IRIS, 2026-08-24, pedido do usuário: "seria os
+    da categoria para assistir dentro do acompanhando"). Diferente de
+    obter_titulos_tenho_interesse (usada noutros lugares) - listar ali quem
+    ainda não tem nada baixado só criaria um clique morto (o "Assistir" do
+    IRIS abre direto o 1º episódio baixado, sem seletor)."""
+    animes = _carregar_animes()
+    return [
+        (r["titulo"], c, r.get("capa_url"))
+        for c, r in animes.items()
+        if r.get("interesse") == "tenho_interesse" and tem_episodio_disponivel_para_assistir(r)
+    ]
+
+
 def obter_primeiro_episodio_baixado(chave):
     """Acha o MENOR número de episódio já baixado (na pasta de downloads) pra
     um anime específico, e devolve (numero, caminho_completo) - ou (None,
