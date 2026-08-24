@@ -1,0 +1,20 @@
+[project]
+name = "moirai"
+version = "0.1.0"
+description = "Gerenciador de animes/episódios da G.A.I.A. (lançamentos, download automático via qBittorrent, MyAnimeList/AniList) - processo próprio, consumido pelo IRIS e pela GAIA via HTTP."
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "qbittorrent-api>=2023.3",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["moirai*"]
+
+[project.scripts]
+moirai = "moirai.main:main"

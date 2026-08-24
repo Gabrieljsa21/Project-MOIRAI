@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Segredos (nunca commitar - token OAuth do MyAnimeList)
+.env
+.env.*
+!.env.example
+
+# Dados gerados em runtime (estado real de animes/downloads/capas do usuário)
+data/*.json
+data/anime_tracker_capas/
+
+# Editores / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
