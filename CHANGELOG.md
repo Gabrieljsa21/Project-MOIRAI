@@ -43,6 +43,15 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
   tudo dentro do próprio MOIRAI, já que é quem tem acesso ao disco de
   downloads.
 
+- **`esta_completo(registro)` (2026-08-25, pedido do usuário)** - nova função
+  em `anime_tracker.py`: True se o assistido localmente já bateu o total de
+  episódios conhecido pelo MAL (`mal_num_episodios`, guardado no casamento -
+  ver `casar_animes_com_mal`/`confirmar_casamento_mal`). Usada pela sub-aba
+  "Completo" nova em "Acompanhando" (UI do lado da GAIA, `ui/qt_modais/
+  animes.py`) e reaproveitada por `sincronizar_progresso_mal` (que já
+  calculava a mesma conta pra decidir "completed" no MAL, agora sem
+  duplicar a lógica).
+
 - **Categoria "🎬 Anime Tracker" do IRIS lista só "Para assistir" (2026-08-24)** -
   novo endpoint `GET /anime/para_assistir` (`obter_titulos_para_assistir`)
   filtra pra só quem já tem episódio baixado pronto, junto com `chave`/
