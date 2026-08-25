@@ -1,7 +1,7 @@
 [project]
 name = "moirai"
 version = "0.1.0"
-description = "Gerenciador de animes/episódios da G.A.I.A. (lançamentos, download automático via qBittorrent, MyAnimeList/AniList) - processo próprio, consumido pelo IRIS e pela GAIA via HTTP."
+description = "Gerenciador de animes/episódios da GAIA (lançamentos, download automático via qBittorrent, MyAnimeList/AniList) - processo próprio, consumido pelo IRIS e pela GAIA via HTTP."
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",
