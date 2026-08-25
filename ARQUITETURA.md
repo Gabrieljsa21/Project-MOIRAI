@@ -1,4 +1,4 @@
-# Arquitetura do Project-MOIRAI
+# Arquitetura do Project MOIRAI
 
 ## Origem
 

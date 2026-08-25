@@ -2,7 +2,7 @@
   <img src="moirai/assets/logo_moirai.png" alt="Moirai" width="180">
 </p>
 
-# Project-MOIRAI
+# Project MOIRAI
 
 Gerenciador de animes/episódios - acompanha lançamentos novos em
 [darkmahou.io](https://darkmahou.io/), valida o calendário oficial de
@@ -10,12 +10,12 @@ lançamento via AniList, baixa automaticamente (via magnet, qBittorrent) os
 episódios dos animes marcados como acompanhados, organiza a biblioteca
 local e sincroniza o progresso assistido com o MyAnimeList. O motor
 principal (downloads, biblioteca, progresso) roda sozinho, sem depender da
-GAIA nem do Project-IRIS; a única exceção é a checagem diária de
+GAIA nem do Project IRIS; a única exceção é a checagem diária de
 lançamentos novos, que precisa ser disparada por fora (ver "Uso
 standalone" abaixo). Depende de serviços externos de verdade além do
 Python (DarkMahou, qBittorrent e, opcionalmente, MyAnimeList e `ffmpeg`);
 quem também usa a [GAIA](../Project%20G.A.I.A) (assistente pessoal do mesmo
-autor) ou o [Project-IRIS](../Project-IRIS) ganha integração extra por HTTP
+autor) ou o [Project IRIS](../Project-IRIS) ganha integração extra por HTTP
 quando o MOIRAI estiver rodando.
 
 Extraído da GAIA em 2026-08-24 - era a feature "Assistente de Animes",
@@ -77,7 +77,7 @@ Variáveis de ambiente opcionais (`.env`, ver `.env.example`):
   pasta de "assistidos" sozinho (padrão
   `http://127.0.0.1:8766/moirai/episodio_assistido`, a ponte HTTP da GAIA).
 
-## Integração com o Project-IRIS
+## Integração com o Project IRIS
 
 O plugin `iris_plugin_moirai` (repo do IRIS) adiciona a categoria "🎬 Anime
 Tracker" ao popup - só aparece se o MOIRAI estiver rodando (checagem TCP
