@@ -1944,6 +1944,21 @@ def retentar_casamento_mal(chave):
         _salvar_animes(animes)
 
 
+def esta_completo(registro):
+    """True se o assistido localmente já bateu (ou passou) o total de
+    episódios conhecido pelo MAL (`mal_num_episodios`, só existe pra anime
+    já casado - ver casar_animes_com_mal/confirmar_casamento_mal). Sem esse
+    total conhecido, nunca conta como completo, mesmo com tudo que já saiu
+    assistido - pode vir mais episódio. Usado pela sub-aba "Completo" de
+    "Acompanhando" no Painel (2026-08-25, pedido do usuário) e por
+    sincronizar_progresso_mal abaixo, pra não duplicar a mesma conta."""
+    total_episodios = registro.get("mal_num_episodios")
+    if not total_episodios:
+        return False
+    _, _, assistido = obter_ultimos_episodios_por_status(registro)
+    return bool(assistido) and assistido >= total_episodios
+
+
 def sincronizar_progresso_mal():
     """Fase 2 (docs/TODO.md) - roda no mesmo loop de 5min de
     sincronizar_biblioteca_local (_monitorar_downloads_animes_loop, run.py),
@@ -1974,8 +1989,7 @@ def sincronizar_progresso_mal():
         if assistido <= ja_sincronizado:
             continue
 
-        total_episodios = registro.get("mal_num_episodios")
-        eh_ultimo_episodio = total_episodios and assistido >= total_episodios
+        eh_ultimo_episodio = esta_completo(registro)
         status = "completed" if eh_ultimo_episodio else "watching"
         sucesso, erro = mal_client.atualizar_progresso(mal_anime_id, assistido, status=status)
         if sucesso:
