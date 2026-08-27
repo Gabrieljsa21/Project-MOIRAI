@@ -5,6 +5,8 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-24 a 2026-08-25: Extração completa - Assistente de Animes (scraping, download, MAL/AniList) (PRs #1 a #7)
+
 ### Correções
 - **README revisado (2026-08-24)** - corrigida a alegação de que a AniList
   sincroniza progresso (ela só valida o calendário oficial de lançamento,
