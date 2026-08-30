@@ -30,7 +30,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from moirai import config
-from moirai.core import anime_tracker
+from moirai.core import anime_tracker, inspiracao_anime
 from moirai.integrations.myanimelist import mal_client
 
 LOCAL_API_HOST = "127.0.0.1"
@@ -118,6 +118,8 @@ class _API(BaseHTTPRequestHandler):
         elif caminho == "/mal/watching":
             dados, erro = mal_client.obter_lista_watching()
             self._responder_json({"dados": dados, "erro": erro})
+        elif caminho == "/mal/personagem_popular_assistido":
+            self._responder_json({"dados": inspiracao_anime.obter_personagem_popular_assistido()})
         elif caminho == "/config":
             self._responder_json(config._carregar())
         else:
@@ -158,8 +160,11 @@ class _API(BaseHTTPRequestHandler):
             self._responder_ok()
         elif caminho == "/anime/renomear_biblioteca":
             dry_run = bool(_ler_corpo_json(self).get("dry_run", True))
-            resultados = anime_tracker.renomear_biblioteca_completa(dry_run=dry_run)
-            self._responder_json([list(item) for item in resultados])
+            resultados, pendentes = anime_tracker.renomear_biblioteca_completa(dry_run=dry_run)
+            self._responder_json({
+                "resultados": [list(item) for item in resultados],
+                "pendentes_numeracao": [list(item) for item in pendentes],
+            })
         elif caminho == "/anime/sincronizar_biblioteca":
             anime_tracker.sincronizar_biblioteca_local()
             self._responder_ok()

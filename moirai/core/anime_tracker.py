@@ -1469,15 +1469,22 @@ def renomear_biblioteca_existente(dry_run=False):
 
     `dry_run=True` só REPORTA o que faria, sem tocar em nenhum arquivo -
     sempre rodar assim primeiro antes de confiar. Nunca sobrescreve um arquivo
-    já existente com o nome novo. Devolve [(caminho_antigo, caminho_novo,
-    confiança), ...] dos que renomeou (ou renomearia, em dry_run)."""
+    já existente com o nome novo. Devolve ([(caminho_antigo, caminho_novo,
+    confiança), ...], [(caminho, titulo_anime, numero_episodio,
+    ultimo_conhecido), ...]) - a 2ª lista é quem bateu por título mas ficou
+    de fora por causa da trava de numeração acumulada (ver comentário
+    abaixo) - achado real, 2026-08-29: "cliquei no botão pra renomear, mas
+    tao reconhecendo" - o pulo por essa trava era 100% silencioso, sem
+    nenhum jeito de saber que era ISSO (episódio recém-baixado, registro
+    ainda sem o "último episódio visto" atualizado - se resolve sozinho no
+    próximo ciclo do MOIRAI, mas até lá o usuário só via "nada aconteceu")."""
     animes_completo = _carregar_animes()
     animes_interesse = [
         (chave, registro) for chave, registro in animes_completo.items()
         if registro.get("interesse") == "tenho_interesse"
     ]
     if not animes_interesse:
-        return []
+        return [], []
     # 🔥 Bug real encontrado 2026-08-08 ("por que Youjo Senki não foi
     # renomeado?"): _PADRAO_NOME_ARQUIVO só confere a FORMA do nome ("{algo} -
     # SxxExx.ext"), não se "{algo}" é de fato o título sanitizado de um anime
@@ -1489,6 +1496,7 @@ def renomear_biblioteca_existente(dry_run=False):
     titulos_sanitizados_interesse = {_sanitizar_nome_arquivo(r["titulo"]) for _, r in animes_interesse}
 
     resultados = []
+    pendentes_numeracao = []
     caminhos_vistos = set()  # 🔥 pastas/assistidos podem ser aninhadas (ex.: "assistidos" DENTRO de "baixados") - sem isso, o mesmo arquivo seria visitado 2x, um pra cada pasta
     for pasta in (obter_anime_pasta_downloads(), obter_anime_pasta_assistidos()):
         if not pasta or not os.path.isdir(pasta):
@@ -1529,6 +1537,7 @@ def renomear_biblioteca_existente(dry_run=False):
                 # deslocamento certo entre as 2 numerações).
                 ultimo_conhecido = registro.get("ultimo_episodio_visto")
                 if ultimo_conhecido is not None and numero_episodio > ultimo_conhecido:
+                    pendentes_numeracao.append((os.path.join(raiz, nome), registro["titulo"], numero_episodio, ultimo_conhecido))
                     continue
 
                 numero_temporada = temporada_arquivo or _detectar_numero_temporada(registro["titulo"])
@@ -1554,7 +1563,7 @@ def renomear_biblioteca_existente(dry_run=False):
                         print(f" [SISTEMA] Erro ao renomear {caminho_antigo}: {e}")
     if not dry_run and resultados:
         _salvar_animes(animes_completo)
-    return resultados
+    return resultados, pendentes_numeracao
 
 
 def _extrair_hashes_por_episodio(url_anime):
@@ -1706,13 +1715,17 @@ def renomear_biblioteca_completa(dry_run=False):
     .mkv todo .mp4 que ficou no padrão da Gaia (converter_mp4_para_mkv,
     biblioteca com container único/consistente). Seguro rodar tudo em
     sequência - o que uma etapa já resolveu sai do padrão "ainda pendente" e
-    a próxima simplesmente não mexe de novo. Devolve os resultados das 3
-    etapas combinados (as 2 primeiras marcam o método - "hash"/confiança -,
-    a conversão marca "mp4->mkv")."""
+    a próxima simplesmente não mexe de novo. Devolve (resultados, pendentes)
+    - resultados combina as 3 etapas (as 2 primeiras marcam o método -
+    "hash"/confiança -, a conversão marca "mp4->mkv"); pendentes vem só da
+    etapa por nome (ver renomear_biblioteca_existente) - vídeo que bateu com
+    um "tenho interesse" mas ficou de fora por episódio mais novo que o
+    último conhecido (provavelmente só falta o MOIRAI atualizar o
+    registro, ver docs/CORRECOES.md 2026-08-29)."""
     resultados_hash = renomear_por_hash_qbittorrent(dry_run=dry_run)
-    resultados_nome = renomear_biblioteca_existente(dry_run=dry_run)
+    resultados_nome, pendentes = renomear_biblioteca_existente(dry_run=dry_run)
     resultados_mkv = [(mp4, mkv, "mp4->mkv") for mp4, mkv in converter_mp4_para_mkv(dry_run=dry_run)]
-    return resultados_hash + resultados_nome + resultados_mkv
+    return resultados_hash + resultados_nome + resultados_mkv, pendentes
 
 
 def _remuxar_para_mkv(caminho_mp4):

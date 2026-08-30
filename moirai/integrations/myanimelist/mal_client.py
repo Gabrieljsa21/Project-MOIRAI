@@ -200,10 +200,10 @@ _LIMITE_CARACTERES_BUSCA_MAL = 64  # 🔥 API do MAL devolve 400 Bad Request aci
 
 
 def obter_lista_completed_com_notas():
-    """Lista "Completed" do usuário com nota - [{"title", "score", "genres"},
-    ...], nota mais alta primeiro. Só inclui item com nota real (> 0) - sem
-    nota não ajuda a recomendação baseada em gosto (feature 4, docs/TODO.md).
-    (dados, erro) - erro None em caso de sucesso."""
+    """Lista "Completed" do usuário com nota - [{"id", "title", "score",
+    "genres"}, ...], nota mais alta primeiro. Só inclui item com nota real
+    (> 0) - sem nota não ajuda a recomendação baseada em gosto (feature 4,
+    docs/TODO.md). (dados, erro) - erro None em caso de sucesso."""
     dados, erro = _chamar_api("GET", "/users/@me/animelist", params={
         "fields": "list_status,genres",
         "status": "completed",
@@ -213,6 +213,7 @@ def obter_lista_completed_com_notas():
         return None, erro
     itens = [
         {
+            "id": item["node"]["id"],
             "title": item["node"]["title"],
             "score": item["list_status"]["score"],
             "genres": [g["name"] for g in item["node"].get("genres", [])],
