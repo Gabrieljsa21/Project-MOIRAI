@@ -5,6 +5,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+### Novidades
+- **Jikan API: inspiração de personagem popular pra Lista de Desejo da GAIA (2026-08-29)** - `integrations/myanimelist/jikan_client.py` + `core/inspiracao_anime.py` (novos), rota `GET /mal/personagem_popular_assistido`. Ver "Jikan API" em `ARQUITETURA.md`.
+
+### Corrigido
+- **Renomeação de biblioteca ficava silenciosa quando episódio recém-baixado não batia com o registro (2026-08-29/30, achado do usuário)** - trava de numeração acumulada (proteção contra fansub tipo Judas) agora reporta o que pulou em vez de só descartar; timeout de 30s do cliente HTTP da GAIA (curto demais pra etapa por hash, ~36s medido) também virava "nada pra renomear" em silêncio. Ver "Assistente de Animes: renomeação..." em `ARQUITETURA.md`.
+
 ## [0.1.0] - 2026-08-24 a 2026-08-25: Extração completa - Assistente de Animes (scraping, download, MAL/AniList) (PRs #1 a #7)
 
 ### Correções
