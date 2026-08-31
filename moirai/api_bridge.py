@@ -2,7 +2,8 @@
 """Ponte HTTP do MOIRAI (porta 8768) - mesmo padrão de `integrations/iris_bridge.py`
 na GAIA (`BaseHTTPRequestHandler` simples, sem framework). 3 consumidores:
 
-- **Project-IRIS** (`iris_plugin_moirai`, categoria "🎬 Anime Tracker" do popup) -
+- **Project-IRIS** (`iris_plugin_moirai`, categoria "🎬 Watchlist" do popup -
+  renomeada de "Anime Tracker" em 2026-08-30, ver `ARQUITETURA.md` do IRIS) -
   `GET /anime/para_assistir` (título+chave+capa_url, só quem já tem episódio
   baixado), `GET /anime/capa/<chave>?url=<capa_url>`, `POST /anime/adicionar`
   + `POST /anime/baixar_pendentes`, `POST /anime/assistir/<titulo>`.
@@ -71,7 +72,8 @@ class _API(BaseHTTPRequestHandler):
         elif caminho == "/anime/titulos_e_chaves":
             self._responder_json(list(anime_tracker.obter_titulos_tenho_interesse()))
         elif caminho == "/anime/para_assistir":
-            # 🔥 2026-08-24, categoria "🎬 Anime Tracker" do Menu Radial (IRIS) -
+            # 🔥 2026-08-24, categoria "🎬 Watchlist" do Menu Radial (IRIS,
+            # renomeada de "Anime Tracker" em 2026-08-30) -
             # só quem já tem episódio baixado pronto, com a capa junto (o "🎬
             # <título>" clicado ali abre o episódio direto, sem seletor).
             self._responder_json([

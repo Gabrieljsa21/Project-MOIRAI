@@ -193,6 +193,17 @@ ambas silenciosas até então:
    passou a usar 180s, e erro de rede real agora levanta `RuntimeError` em
    vez de devolver listas vazias.
 
+## Categoria do IRIS renomeada pra "Watchlist" (2026-08-30)
+
+Pedido do usuário: "No iris,gaia e moirai, renomeia Anime Tracker para
+Watchlist". A MUDANÇA em si é só do lado do IRIS (`AnimeTrackerProvider.
+rotulo_categoria`, ver `ARQUITETURA.md` do Project-IRIS) - o MOIRAI não tem
+UI própria, só os comentários em `moirai/api_bridge.py` que citavam o nome
+da categoria pelo texto foram atualizados pra continuar corretos
+("categoria 'Anime Tracker' do popup" → "categoria 'Watchlist' do popup").
+Nenhuma rota/endpoint/módulo (`anime_tracker.py`, `obter_anime_tracker_ativo`
+etc.) mudou de nome - só a string exibida no popup do IRIS.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
