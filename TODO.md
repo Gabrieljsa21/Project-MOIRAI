@@ -19,3 +19,9 @@ da extração:
   (mesmo padrão do IRIS, `iris/ui/settings_window.py`) só faria sentido se
   um dia alguém quiser gerenciar animes sem a GAIA aberta - não é uma
   necessidade conhecida hoje, registrado só como ideia futura.
+- **Log em disco quando rodando escondido (2026-09-01)** - `iniciar_moirai_
+  oculto.vbs` (novo) sobe o processo via `pythonw.exe`, que descarta
+  `print()`/traceback no vazio (sem console nenhum) - sem um
+  `_RedirecionadorLog` (mesmo padrão de `Project-ERIS/eris/main.py`), um
+  crash silencioso não deixa nenhum rastro. Não bloqueou a criação do
+  launcher, mas dificulta diagnosticar qualquer problema rodando assim.
