@@ -46,11 +46,19 @@ uv pip install -e .
 python -m moirai.main
 ```
 
-Sem janela nem bandeja (ainda) - roda em segundo plano, checando downloads
+Sem janela nem bandeja - roda em segundo plano, checando downloads
 em andamento/biblioteca local/progresso do MyAnimeList a cada 5 minutos
 (`moirai/main.py`), e expondo uma ponte HTTP na porta 8768
 (`moirai/api_bridge.py`) pra quem quiser consultar/adicionar/marcar
 interesse por fora (GAIA, IRIS, ou qualquer script).
+
+**Sem terminal aberto (2026-09-01)**: `iniciar_moirai_oculto.vbs` sobe o
+processo escondido via `pythonw.exe`, sem janela de console nenhuma - mesmo
+padrão do `iniciar_iris_oculto.vbs`/`iniciar_argus_oculto.vbs`. **Ainda sem
+redirecionamento de log pra arquivo** (diferente da GAIA/ERIS, que já
+espelham stdout/stderr - ver `_RedirecionadorLog` em `Project-ERIS/eris/
+main.py`) - rodando assim, qualquer `print()`/traceback é descartado no
+vazio; ver `TODO.md`.
 
 A checagem de lançamentos novos (scraping da home do DarkMahou) NÃO tem loop
 próprio de propósito - quem decide quando rodar é quem consulta

@@ -7,6 +7,7 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ### Novidades
 - **Jikan API: inspiração de personagem popular pra Lista de Desejo da GAIA (2026-08-29)** - `integrations/myanimelist/jikan_client.py` + `core/inspiracao_anime.py` (novos), rota `GET /mal/personagem_popular_assistido`. Ver "Jikan API" em `ARQUITETURA.md`.
+- **`iniciar_moirai.bat`/`iniciar_moirai_oculto.vbs` (2026-09-01)** - roda o MOIRAI escondido via `pythonw.exe`, sem console. Usado pelo item "MOIRAI" da categoria "Projects" do IRIS (ver `Project-IRIS/ARQUITETURA.md`). Ver `README.md`.
 
 ### Alterado
 - **Categoria do Menu Radial (IRIS) renomeada de "Anime Tracker" pra "Watchlist" (2026-08-30, pedido do usuário)** - mudança em código só do lado do IRIS; aqui só os comentários de `moirai/api_bridge.py` que citavam o nome foram atualizados. Ver "Categoria do IRIS renomeada..." em `ARQUITETURA.md`.
