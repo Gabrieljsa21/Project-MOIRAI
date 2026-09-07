@@ -626,7 +626,7 @@ def _detectar_numero_temporada(titulo):
     """Detecta o número da temporada a partir de como o DarkMahou/MAL escrevem
     no título (2026-08-03, pedido do usuário: incluir a temporada no nome do
     arquivo renomeado, ex. "S04E08" - também ajuda a reduzir o risco de
-    colisão de nome entre temporadas documentado no TODO.md). Reconhece "Nª
+    colisão de nome entre temporadas documentado no docs/TODO.md). Reconhece "Nª
     Temporada"/"N Temporada" (padrão mais comum no DarkMahou), "Nth Season"/
     "Season N" (padrão do MAL, ver _titulo_para_busca_mal) e um algarismo
     romano (ex.: "Zhan Shen: Fanchen Shenyu II") - no FIM do título OU seguido
@@ -839,28 +839,50 @@ def _baixar_pendentes_do_registro(chave, registro):
     de UM anime específico - usado tanto pelo loop diário
     (processar_downloads_pendentes, todos os "tenho_interesse") quanto pelo
     disparo imediato ao marcar interesse (baixar_pendentes_de, só esse
-    anime). Devolve quantos downloads novos foram disparados."""
-    disparados = 0
-    for numero_episodio in _episodios_a_baixar(registro):
-        if baixar_episodio(chave, registro, numero_episodio):
-            disparados += 1
-    return disparados
+    anime). Devolve (quantos downloads novos foram disparados, lista dos
+    números de episódio disparados de verdade) - a lista existe pra
+    `processar_downloads_pendentes` conseguir montar a notificação "começou a
+    baixar" com título+episódio (2026-09-05, pedido do usuário), não só o
+    contador de sempre."""
+    numeros_disparados = [n for n in _episodios_a_baixar(registro) if baixar_episodio(chave, registro, n)]
+    return len(numeros_disparados), numeros_disparados
 
 
 def processar_downloads_pendentes():
     """Pros animes marcados "tenho_interesse", baixa qualquer episódio entre o
     maior já conhecido e o último lançado que ainda não foi baixado nem está
-    baixando (ver _episodios_a_baixar - fecha gaps, não só "o último"). Devolve
-    quantos downloads novos foram disparados (só informativo pro log de quem
-    chama)."""
+    baixando (ver _episodios_a_baixar - fecha gaps, não só "o último").
+    Devolve (quantos downloads novos foram disparados, [(titulo, numero), ...]
+    de cada um) - a lista de itens é o que permite notificar QUAIS animes
+    começaram a baixar (ver `formatar_texto_download_iniciado`), em vez de só
+    um contador solto no log."""
     if not qbittorrent_configurado():
-        return 0
+        return 0, []
     disparados = 0
+    itens = []
     for chave, registro in _carregar_animes().items():
         if registro.get("interesse") != "tenho_interesse":
             continue
-        disparados += _baixar_pendentes_do_registro(chave, registro)
-    return disparados
+        qtd, numeros = _baixar_pendentes_do_registro(chave, registro)
+        disparados += qtd
+        itens.extend((registro["titulo"], numero) for numero in numeros)
+    return disparados, itens
+
+
+def formatar_texto_download_iniciado(itens):
+    """Texto pronto pra notificar (Discord/log) quando um episódio novo
+    começa a baixar automaticamente - None se nada foi disparado nessa
+    checagem (mesmo padrão de silêncio de `formatar_texto_pendentes`).
+
+    🔥 Pedido do usuário (2026-09-05): "quero ser notificado quando começa a
+    baixar algum episodio" - antes disso, `executar_checagem_completa` só
+    devolvia um CONTADOR (`disparados`) que a GAIA imprimia no log e nunca
+    mandava pro Discord - o usuário só descobria que baixou algo abrindo o
+    Painel."""
+    if not itens:
+        return None
+    linhas = [f"- {titulo} - Episódio {numero}" for titulo, numero in itens]
+    return "⬇ Começou a baixar:\n" + "\n".join(linhas)
 
 
 def baixar_pendentes_de(chave):
@@ -879,7 +901,8 @@ def baixar_pendentes_de(chave):
     registro = _carregar_animes().get(chave)
     if not registro or registro.get("interesse") != "tenho_interesse":
         return 0
-    return _baixar_pendentes_do_registro(chave, registro)
+    disparados, _numeros = _baixar_pendentes_do_registro(chave, registro)
+    return disparados
 
 
 def baixar_episodios_selecionados(chave, numeros):
@@ -931,13 +954,30 @@ def tem_episodio_disponivel_para_assistir(registro):
 def obter_animes_com_download_ativo():
     """Lista de títulos com pelo menos 1 episódio em `downloads_em_andamento` agora -
     usada pelo Menu Radial (2026-08-07) pra mostrar a categoria contextual "⬇️
-    Downloads Ativos" só quando ela tem conteúdo de verdade pra mostrar."""
+    Downloads Ativos" só quando ela tem conteúdo de verdade pra mostrar, e por
+    `executar_checagem_completa` (ver `formatar_texto_baixando_agora` abaixo)."""
     animes = _carregar_animes()
     return [
         registro["titulo"]
         for registro in animes.values()
         if registro.get("downloads_em_andamento")
     ]
+
+
+def formatar_texto_baixando_agora(titulos):
+    """Texto pronto pra notificar - None se não há nenhum download em
+    andamento agora (mesmo padrão de silêncio de `formatar_texto_pendentes`).
+
+    🔥 Bug real reportado pelo usuário (2026-09-05): "ao clicar em verificar
+    lançamentos, ele não lista os animes que estão sendo baixados" - o botão
+    "🔄 Verificar agora" (ui/qt_modais/animes.py) só mostrava o total de
+    downloads DISPARADOS nessa checagem (`disparados`), nunca os que já
+    estavam baixando de checagens anteriores (torrent lento, por exemplo).
+    Ver `executar_checagem_completa`, que passa `obter_animes_com_download_ativo()`
+    pra cá."""
+    if not titulos:
+        return None
+    return "⬇ Baixando agora:\n" + "\n".join(f"- {titulo}" for titulo in titulos)
 
 
 def verificar_downloads_em_andamento():
@@ -1111,7 +1151,17 @@ def obter_primeiro_episodio_baixado(chave):
     "próximo a assistir" na prática, não necessariamente o episódio 1
     (2026-08-08, pedido do usuário: "se tem do 3 ao 5, inicia o 3"). Usado
     pelo botão "▶️" do Assistente de Animes (ui/qt_modais/animes.py), que
-    abre o resultado via `assistir_e_monitorar` (abaixo)."""
+    abre o resultado via `assistir_e_monitorar` (abaixo).
+
+    🔥 Bug real reportado pelo usuário (2026-09-05): "quando clico no play,
+    ele tá considerando episódio já assistido em vez de só da pasta
+    downloads". `os.walk(pasta_downloads)` sozinho não sabe se um episódio já
+    foi marcado "assistido" (ex.: uma cópia extra/residual do mesmo arquivo
+    continuou na pasta de downloads depois da cópia "de verdade" já ter sido
+    movida pra pasta de assistidos, ver `sincronizar_biblioteca_local`) -
+    descarta aqui qualquer candidato cujo status registrado já seja
+    "assistido", pra nunca reabrir episódio que o usuário já viu só porque o
+    arquivo ainda aparece fisicamente na pasta errada."""
     registro = _carregar_animes().get(chave)
     if not registro:
         return None, None
@@ -1119,6 +1169,7 @@ def obter_primeiro_episodio_baixado(chave):
     pasta = obter_anime_pasta_downloads()
     if not pasta or not os.path.isdir(pasta):
         return None, None
+    episodios = registro.get("episodios", {})
     candidatos = {}
     for raiz, _, arquivos in os.walk(pasta):
         for nome in arquivos:
@@ -1127,7 +1178,10 @@ def obter_primeiro_episodio_baixado(chave):
             match = _PADRAO_NOME_ARQUIVO.match(nome)
             if not match or match.group(1) != prefixo:
                 continue
-            candidatos[int(match.group(2))] = os.path.join(raiz, nome)
+            numero = int(match.group(2))
+            if episodios.get(str(numero)) == "assistido":
+                continue
+            candidatos[numero] = os.path.join(raiz, nome)
     if not candidatos:
         return None, None
     menor = min(candidatos)
@@ -2247,10 +2301,17 @@ def executar_checagem_completa():
     obter_anime_lembrete_atraso_ativo, 2026-08-14, pedido do usuário) - o
     ESTADO por trás continua sendo atualizado normalmente
     (verificar_novos_lancamentos sempre roda, por exemplo), só a NOTIFICAÇÃO
-    é suprimida."""
+    é suprimida.
+
+    🔥 `texto_download_iniciado` (2026-09-05, pedido do usuário: "quero ser
+    notificado quando começa a baixar algum episodio") - lista título+episódio
+    de cada download disparado NESSA checagem (diferente de
+    `texto_baixando_agora`, que lista quem já estava baixando de uma checagem
+    anterior)."""
     pendentes = verificar_novos_lancamentos()
     texto_pendentes = formatar_texto_pendentes(pendentes) if obter_anime_notificar_pendentes_ativo() else None
-    disparados = processar_downloads_pendentes()
+    disparados, itens_baixados = processar_downloads_pendentes()
+    texto_download_iniciado = formatar_texto_download_iniciado(itens_baixados)
     backfill_temporadas_estreia()
     casar_animes_com_mal()
     casar_animes_com_anilist()
@@ -2258,9 +2319,12 @@ def executar_checagem_completa():
     texto_calendario = formatar_texto_calendario_anilist(estados_anilist)
     avisos_atraso = obter_lembretes_atraso() if obter_anime_lembrete_atraso_ativo() else []
     texto_lembretes = formatar_texto_lembretes_atraso(avisos_atraso)
+    texto_baixando_agora = formatar_texto_baixando_agora(obter_animes_com_download_ativo())
     return {
         "texto_pendentes": texto_pendentes,
         "disparados": disparados,
+        "texto_download_iniciado": texto_download_iniciado,
         "texto_calendario": texto_calendario,
         "texto_lembretes": texto_lembretes,
+        "texto_baixando_agora": texto_baixando_agora,
     }

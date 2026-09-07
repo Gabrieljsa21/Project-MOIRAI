@@ -16,6 +16,7 @@ dist/
 # Dados gerados em runtime (estado real de animes/downloads/capas do usuário)
 data/*.json
 data/anime_tracker_capas/
+logs/
 
 # Editores / SO
 .vscode/

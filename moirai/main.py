@@ -11,14 +11,20 @@ próprio aqui de propósito - continua sendo a GAIA quem decide QUANDO rodar (se
 Agendador Diário já cuida da fila/lock/ordem entre vários avisos proativos) e O QUE
 DIZER no Discord (valor de persona); o MOIRAI só expõe o resultado via HTTP
 (`GET /checagem_diaria`, `moirai/api_bridge.py`) pra GAIA consultar quando quiser -
-ver "Padrão GAIA → satélite (poll)" no TODO.md citado acima."""
+ver "Padrão GAIA → satélite (poll)" no docs/TODO.md citado acima."""
 import os
 import socket
 import sys
 import threading
 import time
 
+from dotenv import load_dotenv
+
+PASTA_PROJETO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(PASTA_PROJETO, ".env"), override=True)
+
 from moirai import config
+from moirai import runtime_log
 from moirai.api_bridge import iniciar_servidor_api
 from moirai.core import anime_tracker
 
@@ -75,6 +81,7 @@ def _loop_manutencao():
 
 
 def main():
+    runtime_log.ativar(PASTA_PROJETO)
     _garantir_instancia_unica()
     os.makedirs("data", exist_ok=True)
 

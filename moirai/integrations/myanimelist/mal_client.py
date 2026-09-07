@@ -227,7 +227,7 @@ def obter_lista_completed_com_notas():
 
 def buscar_anime(titulo):
     """Busca por título - [{"id", "title", "num_episodes"}, ...], só os campos
-    úteis pra casar com o anime rastreado no DarkMahou (ver TODO.md - "risco real:
+    úteis pra casar com o anime rastreado no DarkMahou (ver docs/TODO.md - "risco real:
     título pode não bater exato, precisa de confirmação manual"). Trunca em
     `_LIMITE_CARACTERES_BUSCA_MAL` - o parâmetro `q` da API do MAL devolve 400
     Bad Request acima disso (títulos longos de isekai/light novel batem nesse

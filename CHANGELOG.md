@@ -1,23 +1,34 @@
 # Changelog
 
+Este arquivo registra as mudanças importantes do projeto. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
+
 Histórico de alto nível do que muda no MOIRAI, por versão. Ver
-`ARQUITETURA.md` pro detalhe técnico completo.
+`docs/ARQUITETURA.md` pro detalhe técnico completo.
 
 ## [Unreleased]
 
-### Novidades
-- **Jikan API: inspiração de personagem popular pra Lista de Desejo da GAIA (2026-08-29)** - `integrations/myanimelist/jikan_client.py` + `core/inspiracao_anime.py` (novos), rota `GET /mal/personagem_popular_assistido`. Ver "Jikan API" em `ARQUITETURA.md`.
-- **`iniciar_moirai.bat`/`iniciar_moirai_oculto.vbs` (2026-09-01)** - roda o MOIRAI escondido via `pythonw.exe`, sem console. Usado pelo item "MOIRAI" da categoria "Projects" do IRIS (ver `Project-IRIS/ARQUITETURA.md`). Ver `README.md`.
+### Adicionado
+
+- **Endpoint `GET /pasta_downloads` para o IRIS** (2026-09-07): devolve o caminho configurado por `config.obter_anime_pasta_downloads`, permitindo que a categoria Watchlist restaure a ação de abrir a pasta local. Validado com servidor HTTP efêmero e configuração temporária.
+- **Notificação de "começou a baixar" (2026-09-05, pedido do usuário na GAIA)** - `processar_downloads_pendentes` agora devolve também título+episódio de cada download disparado (não só o contador), e `formatar_texto_download_iniciado`/`executar_checagem_completa` (novo campo `texto_download_iniciado`) formatam isso pra notificação - antes só existia um contador que a GAIA imprimia no log, nunca mandava pro Discord. A checagem em si também passou a rodar por INTERVALO (não mais 1x/dia) do lado da GAIA - ver CHANGELOG de lá, "Assistente de Animes: checagem por intervalo...".
+- **Jikan API: inspiração de personagem popular pra Lista de Desejo da GAIA (2026-08-29)** - `integrations/myanimelist/jikan_client.py` + `core/inspiracao_anime.py` (novos), rota `GET /mal/personagem_popular_assistido`. Ver "Jikan API" em `docs/ARQUITETURA.md`.
+- **`iniciar_moirai.bat`/`iniciar_moirai_oculto.vbs` (2026-09-01)** - roda o MOIRAI escondido via `pythonw.exe`, sem console. Usado pelo item "MOIRAI" da categoria "Projects" do IRIS (ver `Project-IRIS/docs/ARQUITETURA.md`). Ver `README.md`.
 
 ### Alterado
-- **Categoria do Menu Radial (IRIS) renomeada de "Anime Tracker" pra "Watchlist" (2026-08-30, pedido do usuário)** - mudança em código só do lado do IRIS; aqui só os comentários de `moirai/api_bridge.py` que citavam o nome foram atualizados. Ver "Categoria do IRIS renomeada..." em `ARQUITETURA.md`.
+
+- **Categoria do Menu Radial (IRIS) renomeada de "Anime Tracker" pra "Watchlist" (2026-08-30, pedido do usuário)** - mudança em código só do lado do IRIS; aqui só os comentários de `moirai/api_bridge.py` que citavam o nome foram atualizados. Ver "Categoria do IRIS renomeada..." em `docs/ARQUITETURA.md`.
 
 ### Corrigido
-- **Renomeação de biblioteca ficava silenciosa quando episódio recém-baixado não batia com o registro (2026-08-29/30, achado do usuário)** - trava de numeração acumulada (proteção contra fansub tipo Judas) agora reporta o que pulou em vez de só descartar; timeout de 30s do cliente HTTP da GAIA (curto demais pra etapa por hash, ~36s medido) também virava "nada pra renomear" em silêncio. Ver "Assistente de Animes: renomeação..." em `ARQUITETURA.md`.
 
-## [0.1.0] - 2026-08-24 a 2026-08-25: Extração completa - Assistente de Animes (scraping, download, MAL/AniList) (PRs #1 a #7)
+- **`.env` local finalmente carregado pelo processo standalone** (2026-09-07): `moirai.main` usava `MAL_CLIENT_ID`, `QBITTORRENT_*` e outras configurações sem chamar `load_dotenv()`. O entrypoint agora carrega o arquivo da raiz com `override=True` antes de importar o restante do pacote; `python-dotenv` entrou nas dependências declaradas.
+- **Logs preservados durante execução escondida** (2026-09-07): `pythonw.exe` descartava `print()` e tracebacks porque não havia console. `moirai.runtime_log` agora espelha `stdout` e `stderr` em `logs/AAAA-MM-DD.log`, com horário em cada linha e troca automática de arquivo na virada do dia. A pasta de runtime foi adicionada ao `.gitignore`. Validado em diretório temporário e por compilação do entrypoint.
+- **Botão "▶️" (Assistente de Animes, GAIA) podia reabrir episódio já assistido (2026-09-05, achado do usuário)** - `obter_primeiro_episodio_baixado` escolhia o menor número de episódio achado por varredura CRUA da pasta de downloads, sem checar o status já rastreado - se uma cópia residual do arquivo continuasse fisicamente lá mesmo depois da cópia real já ter sido movida pra pasta de assistidos, o play reabria ela. Agora descarta qualquer candidato cujo `episodios[N]` já seja `"assistido"`.
+- **"🔄 Verificar agora" (Assistente de Animes, GAIA) não listava os animes com download em andamento (2026-09-05, achado do usuário)** - `executar_checagem_completa` só devolvia quantos downloads foram DISPARADOS nessa checagem (`disparados`), nunca os que já estavam baixando de uma checagem anterior (torrent lento, por exemplo). Novo campo `texto_baixando_agora` (`formatar_texto_baixando_agora`) reaproveita `obter_animes_com_download_ativo` (já existia, sem nenhum uso desde a migração do Menu Radial pro IRIS) pra listar os títulos com download ativo agora.
+- **Renomeação de biblioteca ficava silenciosa quando episódio recém-baixado não batia com o registro (2026-08-29/30, achado do usuário)** - trava de numeração acumulada (proteção contra fansub tipo Judas) agora reporta o que pulou em vez de só descartar; timeout de 30s do cliente HTTP da GAIA (curto demais pra etapa por hash, ~36s medido) também virava "nada pra renomear" em silêncio. Ver "Assistente de Animes: renomeação..." em `docs/ARQUITETURA.md`.
 
-### Correções
+## [0.1.0] - 2026-08-25
+
+### Corrigido
 - **README revisado (2026-08-24)** - corrigida a alegação de que a AniList
   sincroniza progresso (ela só valida o calendário oficial de lançamento,
   via `idMal`; quem sincroniza progresso é o MyAnimeList); corrigida a
@@ -29,7 +40,7 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
   arquivo pra pasta configurada); origem do nome detalhada com as três
   Moiras (Cloto/Láquesis/Átropos).
 
-### Novidades
+### Adicionado
 - **Repositório criado (Fase 1 da extração pro Project MOIRAI, 2026-08-24)** -
   motor completo do Assistente de Animes (scraping do DarkMahou, estado,
   download automático via qBittorrent, sincronização com MyAnimeList/
