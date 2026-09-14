@@ -25,8 +25,10 @@ from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
 
+from moirai.paths import caminho_dados
+
 CLIENT_ID = os.environ.get("MAL_CLIENT_ID")
-CAMINHO_TOKEN = "data/mal_token.json"
+CAMINHO_TOKEN = caminho_dados("mal_token.json")
 PORTA_CALLBACK_LOCAL = 8934
 REDIRECT_URI = f"http://localhost:{PORTA_CALLBACK_LOCAL}/mal_callback"
 

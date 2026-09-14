@@ -8,7 +8,9 @@ processo está de pé)."""
 import json
 import os
 
-ARQUIVO_CONFIG = "data/moirai_config.json"
+from moirai.paths import caminho_dados
+
+ARQUIVO_CONFIG = caminho_dados("moirai_config.json")
 
 
 def _carregar():
