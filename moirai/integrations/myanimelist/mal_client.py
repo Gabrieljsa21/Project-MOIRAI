@@ -25,8 +25,10 @@ from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
 
+from moirai.paths import caminho_dados
+
 CLIENT_ID = os.environ.get("MAL_CLIENT_ID")
-CAMINHO_TOKEN = "data/mal_token.json"
+CAMINHO_TOKEN = caminho_dados("mal_token.json")
 PORTA_CALLBACK_LOCAL = 8934
 REDIRECT_URI = f"http://localhost:{PORTA_CALLBACK_LOCAL}/mal_callback"
 
@@ -227,7 +229,7 @@ def obter_lista_completed_com_notas():
 
 def buscar_anime(titulo):
     """Busca por título - [{"id", "title", "num_episodes"}, ...], só os campos
-    úteis pra casar com o anime rastreado no DarkMahou (ver TODO.md - "risco real:
+    úteis pra casar com o anime rastreado no DarkMahou (ver docs/TODO.md - "risco real:
     título pode não bater exato, precisa de confirmação manual"). Trunca em
     `_LIMITE_CARACTERES_BUSCA_MAL` - o parâmetro `q` da API do MAL devolve 400
     Bad Request acima disso (títulos longos de isekai/light novel batem nesse

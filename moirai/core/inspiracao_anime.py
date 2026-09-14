@@ -20,8 +20,9 @@ import threading
 import time
 
 from moirai.integrations.myanimelist import jikan_client, mal_client
+from moirai.paths import caminho_dados
 
-_ARQUIVO_CACHE = "data/jikan_personagens_cache.json"
+_ARQUIVO_CACHE = caminho_dados("jikan_personagens_cache.json")
 _TTL_CACHE_SEGUNDOS = 7 * 24 * 60 * 60
 _PAGINAS_PERSONAGENS_POPULARES = 4  # 25 por página -> ~100 personagens
 

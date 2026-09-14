@@ -68,10 +68,11 @@ from moirai.config import (
     obter_renomear_confianca_minima, obter_renomear_confianca_parcial, obter_renomear_margem_parcial,
     obter_limiar_minutos_assistido, obter_anime_lembrete_atraso_ativo, obter_anime_notificar_pendentes_ativo,
 )
+from moirai.paths import caminho_dados
 
 URL_BASE = "https://darkmahou.io"
-ARQUIVO_ANIMES = "data/anime_tracker_animes.json"
-ARQUIVO_CHECAGEM_DIARIA = "data/anime_tracker_checagem_diaria.json"
+ARQUIVO_ANIMES = caminho_dados("anime_tracker_animes.json")
+ARQUIVO_CHECAGEM_DIARIA = caminho_dados("anime_tracker_checagem_diaria.json")
 CATEGORIA_QBITTORRENT = "gaia-animes"
 
 # 🔥 Site protegido por Cloudflare mas sem desafio JS de verdade (testado 2026-08-02) -
@@ -80,7 +81,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 _TIMEOUT_REQUEST = 20
 
 EXTENSOES_VIDEO = (".mkv", ".mp4", ".avi")
-PASTA_CAPAS = "data/anime_tracker_capas"
+PASTA_CAPAS = caminho_dados("anime_tracker_capas")
 
 
 # ======================================================
@@ -626,7 +627,7 @@ def _detectar_numero_temporada(titulo):
     """Detecta o número da temporada a partir de como o DarkMahou/MAL escrevem
     no título (2026-08-03, pedido do usuário: incluir a temporada no nome do
     arquivo renomeado, ex. "S04E08" - também ajuda a reduzir o risco de
-    colisão de nome entre temporadas documentado no TODO.md). Reconhece "Nª
+    colisão de nome entre temporadas documentado no docs/TODO.md). Reconhece "Nª
     Temporada"/"N Temporada" (padrão mais comum no DarkMahou), "Nth Season"/
     "Season N" (padrão do MAL, ver _titulo_para_busca_mal) e um algarismo
     romano (ex.: "Zhan Shen: Fanchen Shenyu II") - no FIM do título OU seguido
@@ -839,28 +840,50 @@ def _baixar_pendentes_do_registro(chave, registro):
     de UM anime específico - usado tanto pelo loop diário
     (processar_downloads_pendentes, todos os "tenho_interesse") quanto pelo
     disparo imediato ao marcar interesse (baixar_pendentes_de, só esse
-    anime). Devolve quantos downloads novos foram disparados."""
-    disparados = 0
-    for numero_episodio in _episodios_a_baixar(registro):
-        if baixar_episodio(chave, registro, numero_episodio):
-            disparados += 1
-    return disparados
+    anime). Devolve (quantos downloads novos foram disparados, lista dos
+    números de episódio disparados de verdade) - a lista existe pra
+    `processar_downloads_pendentes` conseguir montar a notificação "começou a
+    baixar" com título+episódio (2026-09-05, pedido do usuário), não só o
+    contador de sempre."""
+    numeros_disparados = [n for n in _episodios_a_baixar(registro) if baixar_episodio(chave, registro, n)]
+    return len(numeros_disparados), numeros_disparados
 
 
 def processar_downloads_pendentes():
     """Pros animes marcados "tenho_interesse", baixa qualquer episódio entre o
     maior já conhecido e o último lançado que ainda não foi baixado nem está
-    baixando (ver _episodios_a_baixar - fecha gaps, não só "o último"). Devolve
-    quantos downloads novos foram disparados (só informativo pro log de quem
-    chama)."""
+    baixando (ver _episodios_a_baixar - fecha gaps, não só "o último").
+    Devolve (quantos downloads novos foram disparados, [(titulo, numero), ...]
+    de cada um) - a lista de itens é o que permite notificar QUAIS animes
+    começaram a baixar (ver `formatar_texto_download_iniciado`), em vez de só
+    um contador solto no log."""
     if not qbittorrent_configurado():
-        return 0
+        return 0, []
     disparados = 0
+    itens = []
     for chave, registro in _carregar_animes().items():
         if registro.get("interesse") != "tenho_interesse":
             continue
-        disparados += _baixar_pendentes_do_registro(chave, registro)
-    return disparados
+        qtd, numeros = _baixar_pendentes_do_registro(chave, registro)
+        disparados += qtd
+        itens.extend((registro["titulo"], numero) for numero in numeros)
+    return disparados, itens
+
+
+def formatar_texto_download_iniciado(itens):
+    """Texto pronto pra notificar (Discord/log) quando um episódio novo
+    começa a baixar automaticamente - None se nada foi disparado nessa
+    checagem (mesmo padrão de silêncio de `formatar_texto_pendentes`).
+
+    🔥 Pedido do usuário (2026-09-05): "quero ser notificado quando começa a
+    baixar algum episodio" - antes disso, `executar_checagem_completa` só
+    devolvia um CONTADOR (`disparados`) que a GAIA imprimia no log e nunca
+    mandava pro Discord - o usuário só descobria que baixou algo abrindo o
+    Painel."""
+    if not itens:
+        return None
+    linhas = [f"- {titulo} - Episódio {numero}" for titulo, numero in itens]
+    return "⬇ Começou a baixar:\n" + "\n".join(linhas)
 
 
 def baixar_pendentes_de(chave):
@@ -879,7 +902,8 @@ def baixar_pendentes_de(chave):
     registro = _carregar_animes().get(chave)
     if not registro or registro.get("interesse") != "tenho_interesse":
         return 0
-    return _baixar_pendentes_do_registro(chave, registro)
+    disparados, _numeros = _baixar_pendentes_do_registro(chave, registro)
+    return disparados
 
 
 def baixar_episodios_selecionados(chave, numeros):
@@ -919,6 +943,21 @@ def _maior_arquivo_video(caminho):
     return max(candidatos, key=os.path.getsize)
 
 
+def _numero_episodio_no_nome_arquivo(caminho):
+    """Extrai o episódio declarado no nome do vídeo, se ele for inequívoco.
+
+    Isto é uma proteção de auditoria para ``content_path`` incorreto do
+    qBittorrent: não se pode renomear um ``S01E20`` como se fosse o episódio
+    22 apenas porque o hash que está sendo acompanhado era o do 22.
+    """
+    nome = os.path.basename(caminho)
+    padrao = re.search(r"\bS\d{1,2}E(\d{1,4})\b", nome, re.IGNORECASE)
+    if padrao:
+        return int(padrao.group(1))
+    padrao = re.search(r"-\s*(\d{1,4})\s*(?:\[|\(|_|\.|$)", nome)
+    return int(padrao.group(1)) if padrao else None
+
+
 def tem_episodio_disponivel_para_assistir(registro):
     """True se o anime tem pelo menos 1 episódio `"baixado"` (baixado, ainda
     NÃO `"assistido"`) - usado pela aba "▶️ Disponíveis" do Painel
@@ -931,13 +970,30 @@ def tem_episodio_disponivel_para_assistir(registro):
 def obter_animes_com_download_ativo():
     """Lista de títulos com pelo menos 1 episódio em `downloads_em_andamento` agora -
     usada pelo Menu Radial (2026-08-07) pra mostrar a categoria contextual "⬇️
-    Downloads Ativos" só quando ela tem conteúdo de verdade pra mostrar."""
+    Downloads Ativos" só quando ela tem conteúdo de verdade pra mostrar, e por
+    `executar_checagem_completa` (ver `formatar_texto_baixando_agora` abaixo)."""
     animes = _carregar_animes()
     return [
         registro["titulo"]
         for registro in animes.values()
         if registro.get("downloads_em_andamento")
     ]
+
+
+def formatar_texto_baixando_agora(titulos):
+    """Texto pronto pra notificar - None se não há nenhum download em
+    andamento agora (mesmo padrão de silêncio de `formatar_texto_pendentes`).
+
+    🔥 Bug real reportado pelo usuário (2026-09-05): "ao clicar em verificar
+    lançamentos, ele não lista os animes que estão sendo baixados" - o botão
+    "🔄 Verificar agora" (ui/qt_modais/animes.py) só mostrava o total de
+    downloads DISPARADOS nessa checagem (`disparados`), nunca os que já
+    estavam baixando de checagens anteriores (torrent lento, por exemplo).
+    Ver `executar_checagem_completa`, que passa `obter_animes_com_download_ativo()`
+    pra cá."""
+    if not titulos:
+        return None
+    return "⬇ Baixando agora:\n" + "\n".join(f"- {titulo}" for titulo in titulos)
 
 
 def verificar_downloads_em_andamento():
@@ -987,7 +1043,17 @@ def verificar_downloads_em_andamento():
         return 0
 
     concluidos = 0
+    mudou = False
     for chave, numero_episodio_str, info in pendentes:
+        registro = animes[chave]
+        if registro.get("episodios", {}).get(numero_episodio_str) in ("baixado", "assistido"):
+            # Um estado antigo pode sobreviver a uma conclusão anterior. Não o
+            # deixe rebaixar um episódio assistido nem tocar em um torrent que
+            # o usuário possa estar mantendo no qBittorrent por conta própria.
+            registro.get("downloads_em_andamento", {}).pop(numero_episodio_str, None)
+            print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: acompanhamento antigo removido; o episódio já está marcado como {registro['episodios'][numero_episodio_str]}.")
+            mudou = True
+            continue
         try:
             torrents = cliente.torrents_info(torrent_hashes=info["hash"])
         except Exception as e:
@@ -996,11 +1062,21 @@ def verificar_downloads_em_andamento():
         if not torrents or torrents[0].progress < 1.0:
             continue
 
-        registro = animes[chave]
         agora = datetime.now().strftime("%Y-%m-%d %H:%M")
         caminho_conteudo = torrents[0].content_path or info["pasta"]
         arquivo_video = _maior_arquivo_video(caminho_conteudo)
         if arquivo_video:
+            episodio_no_arquivo = _numero_episodio_no_nome_arquivo(arquivo_video)
+            if episodio_no_arquivo is not None and episodio_no_arquivo != int(numero_episodio_str):
+                motivo = (
+                    f"{agora}: conteúdo do qBittorrent diverge do episódio acompanhado "
+                    f"(esperado E{int(numero_episodio_str):02d}, nome informa E{episodio_no_arquivo:02d}: "
+                    f"'{arquivo_video}'). Mantido em acompanhamento; não vou renomear nem marcar como baixado."
+                )
+                registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = motivo
+                print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: {motivo}")
+                mudou = True
+                continue
             extensao = os.path.splitext(arquivo_video)[1]
             numero_temporada = _detectar_numero_temporada(registro["titulo"])
             nome_novo = f"{_sanitizar_nome_arquivo(registro['titulo'])} - S{numero_temporada:02d}E{int(numero_episodio_str):02d}{extensao}"
@@ -1013,9 +1089,14 @@ def verificar_downloads_em_andamento():
                     registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = (
                         f"{agora}: destino já existia ({nome_novo}) - arquivo original não foi mexido"
                     )
+                    print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: destino já existe; mantendo o torrent em acompanhamento.")
+                    mudou = True
+                    continue
             except OSError as e:
                 print(f" [SISTEMA] Erro ao renomear {arquivo_video}: {e}")
                 registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = f"{agora}: {e}"
+                mudou = True
+                continue
         else:
             # 🔥 Bug real reportado (2026-08-16, "por que não renomeou na hora?")
             # - até aqui o episódio era marcado "baixado" mesmo quando o
@@ -1030,11 +1111,15 @@ def verificar_downloads_em_andamento():
                 f"{agora}: nenhum arquivo de vídeo encontrado em '{caminho_conteudo}' "
                 f"(qBittorrent pode estar reportando content_path desatualizado/'missingFiles')"
             )
+            print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: arquivo de vídeo não encontrado; mantendo o torrent em acompanhamento.")
+            mudou = True
+            continue
 
         registro.setdefault("episodios", {})[numero_episodio_str] = "baixado"
         registro.setdefault("episodios_baixado_em", {})[numero_episodio_str] = agora
         registro.get("downloads_em_andamento", {}).pop(numero_episodio_str, None)
         concluidos += 1
+        mudou = True
         print(f" [SISTEMA] 🎬 Download concluído: {registro['titulo']} Episódio {numero_episodio_str}.")
         try:
             cliente.torrents_delete(delete_files=False, torrent_hashes=info["hash"])
@@ -1042,7 +1127,7 @@ def verificar_downloads_em_andamento():
         except Exception as e:
             print(f" [SISTEMA] Erro ao remover {registro['titulo']} Episódio {numero_episodio_str} da lista do qBittorrent: {e}")
 
-    if concluidos:
+    if mudou:
         _salvar_animes(animes)
     return concluidos
 
@@ -1111,7 +1196,17 @@ def obter_primeiro_episodio_baixado(chave):
     "próximo a assistir" na prática, não necessariamente o episódio 1
     (2026-08-08, pedido do usuário: "se tem do 3 ao 5, inicia o 3"). Usado
     pelo botão "▶️" do Assistente de Animes (ui/qt_modais/animes.py), que
-    abre o resultado via `assistir_e_monitorar` (abaixo)."""
+    abre o resultado via `assistir_e_monitorar` (abaixo).
+
+    🔥 Bug real reportado pelo usuário (2026-09-05): "quando clico no play,
+    ele tá considerando episódio já assistido em vez de só da pasta
+    downloads". `os.walk(pasta_downloads)` sozinho não sabe se um episódio já
+    foi marcado "assistido" (ex.: uma cópia extra/residual do mesmo arquivo
+    continuou na pasta de downloads depois da cópia "de verdade" já ter sido
+    movida pra pasta de assistidos, ver `sincronizar_biblioteca_local`) -
+    descarta aqui qualquer candidato cujo status registrado já seja
+    "assistido", pra nunca reabrir episódio que o usuário já viu só porque o
+    arquivo ainda aparece fisicamente na pasta errada."""
     registro = _carregar_animes().get(chave)
     if not registro:
         return None, None
@@ -1119,6 +1214,7 @@ def obter_primeiro_episodio_baixado(chave):
     pasta = obter_anime_pasta_downloads()
     if not pasta or not os.path.isdir(pasta):
         return None, None
+    episodios = registro.get("episodios", {})
     candidatos = {}
     for raiz, _, arquivos in os.walk(pasta):
         for nome in arquivos:
@@ -1127,7 +1223,10 @@ def obter_primeiro_episodio_baixado(chave):
             match = _PADRAO_NOME_ARQUIVO.match(nome)
             if not match or match.group(1) != prefixo:
                 continue
-            candidatos[int(match.group(2))] = os.path.join(raiz, nome)
+            numero = int(match.group(2))
+            if episodios.get(str(numero)) == "assistido":
+                continue
+            candidatos[numero] = os.path.join(raiz, nome)
     if not candidatos:
         return None, None
     menor = min(candidatos)
@@ -2247,10 +2346,17 @@ def executar_checagem_completa():
     obter_anime_lembrete_atraso_ativo, 2026-08-14, pedido do usuário) - o
     ESTADO por trás continua sendo atualizado normalmente
     (verificar_novos_lancamentos sempre roda, por exemplo), só a NOTIFICAÇÃO
-    é suprimida."""
+    é suprimida.
+
+    🔥 `texto_download_iniciado` (2026-09-05, pedido do usuário: "quero ser
+    notificado quando começa a baixar algum episodio") - lista título+episódio
+    de cada download disparado NESSA checagem (diferente de
+    `texto_baixando_agora`, que lista quem já estava baixando de uma checagem
+    anterior)."""
     pendentes = verificar_novos_lancamentos()
     texto_pendentes = formatar_texto_pendentes(pendentes) if obter_anime_notificar_pendentes_ativo() else None
-    disparados = processar_downloads_pendentes()
+    disparados, itens_baixados = processar_downloads_pendentes()
+    texto_download_iniciado = formatar_texto_download_iniciado(itens_baixados)
     backfill_temporadas_estreia()
     casar_animes_com_mal()
     casar_animes_com_anilist()
@@ -2258,9 +2364,12 @@ def executar_checagem_completa():
     texto_calendario = formatar_texto_calendario_anilist(estados_anilist)
     avisos_atraso = obter_lembretes_atraso() if obter_anime_lembrete_atraso_ativo() else []
     texto_lembretes = formatar_texto_lembretes_atraso(avisos_atraso)
+    texto_baixando_agora = formatar_texto_baixando_agora(obter_animes_com_download_ativo())
     return {
         "texto_pendentes": texto_pendentes,
         "disparados": disparados,
+        "texto_download_iniciado": texto_download_iniciado,
         "texto_calendario": texto_calendario,
         "texto_lembretes": texto_lembretes,
+        "texto_baixando_agora": texto_baixando_agora,
     }

@@ -11,14 +11,47 @@ próprio aqui de propósito - continua sendo a GAIA quem decide QUANDO rodar (se
 Agendador Diário já cuida da fila/lock/ordem entre vários avisos proativos) e O QUE
 DIZER no Discord (valor de persona); o MOIRAI só expõe o resultado via HTTP
 (`GET /checagem_diaria`, `moirai/api_bridge.py`) pra GAIA consultar quando quiser -
-ver "Padrão GAIA → satélite (poll)" no TODO.md citado acima."""
+ver "Padrão GAIA → satélite (poll)" no docs/TODO.md citado acima."""
 import os
 import socket
 import sys
 import threading
 import time
 
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv(caminho, override=False):
+        """Fallback mínimo para instalações antigas ainda sem python-dotenv.
+
+        O atualizador da GAIA troca o código do satélite sem necessariamente
+        sincronizar a .venv. A ausência de uma dependência opcional de leitura
+        do .env não pode impedir o MOIRAI inteiro de iniciar.
+        """
+        if not os.path.isfile(caminho):
+            return False
+        with open(caminho, "r", encoding="utf-8-sig") as arquivo:
+            for linha in arquivo:
+                linha = linha.strip()
+                if not linha or linha.startswith("#") or "=" not in linha:
+                    continue
+                if linha.startswith("export "):
+                    linha = linha[7:].lstrip()
+                chave, valor = linha.split("=", 1)
+                chave = chave.strip()
+                valor = valor.strip()
+                if len(valor) >= 2 and valor[0] == valor[-1] and valor[0] in "\"'":
+                    valor = valor[1:-1]
+                if chave and (override or chave not in os.environ):
+                    os.environ[chave] = valor
+        return True
+
+from moirai.paths import PASTA_PROJETO, PASTA_DADOS
+
+load_dotenv(str(PASTA_PROJETO / ".env"), override=True)
+
 from moirai import config
+from moirai import runtime_log
 from moirai.api_bridge import iniciar_servidor_api
 from moirai.core import anime_tracker
 
@@ -75,8 +108,9 @@ def _loop_manutencao():
 
 
 def main():
+    runtime_log.ativar(str(PASTA_PROJETO))
     _garantir_instancia_unica()
-    os.makedirs("data", exist_ok=True)
+    PASTA_DADOS.mkdir(parents=True, exist_ok=True)
 
     anime_tracker.definir_callback_episodio_movido_assistidos(_avisar_episodio_assistido_webhook)
 

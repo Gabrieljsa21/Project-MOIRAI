@@ -3,7 +3,7 @@
 na GAIA (`BaseHTTPRequestHandler` simples, sem framework). 3 consumidores:
 
 - **Project-IRIS** (`iris_plugin_moirai`, categoria "🎬 Watchlist" do popup -
-  renomeada de "Anime Tracker" em 2026-08-30, ver `ARQUITETURA.md` do IRIS) -
+  renomeada de "Anime Tracker" em 2026-08-30, ver `docs/ARQUITETURA.md` do IRIS) -
   `GET /anime/para_assistir` (título+chave+capa_url, só quem já tem episódio
   baixado), `GET /anime/capa/<chave>?url=<capa_url>`, `POST /anime/adicionar`
   + `POST /anime/baixar_pendentes`, `POST /anime/assistir/<titulo>`.
@@ -86,6 +86,8 @@ class _API(BaseHTTPRequestHandler):
             self._responder_json([list(item) for item in anime_tracker.obter_estados_lancamento_anilist()])
         elif caminho == "/anime/temporada_atual":
             self._responder_json({"temporada": anime_tracker.obter_temporada_atual()})
+        elif caminho == "/pasta_downloads":
+            self._responder_json({"caminho": config.obter_anime_pasta_downloads()})
         elif caminho.startswith("/anime/progresso/"):
             chave = urllib.parse.unquote(caminho[len("/anime/progresso/"):])
             registro = dict(anime_tracker.obter_animes_rastreados()).get(chave)
