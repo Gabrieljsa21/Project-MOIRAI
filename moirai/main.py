@@ -11,7 +11,14 @@ próprio aqui de propósito - continua sendo a GAIA quem decide QUANDO rodar (se
 Agendador Diário já cuida da fila/lock/ordem entre vários avisos proativos) e O QUE
 DIZER no Discord (valor de persona); o MOIRAI só expõe o resultado via HTTP
 (`GET /checagem_diaria`, `moirai/api_bridge.py`) pra GAIA consultar quando quiser -
-ver "Padrão GAIA → satélite (poll)" no docs/TODO.md citado acima."""
+ver "Padrão GAIA → satélite (poll)" no docs/TODO.md citado acima.
+
+🔥 Exceção (2026-09-24, pedido do usuário depois de episódios perdidos numa
+viagem): com a GAIA FECHADA, o próprio loop de manutenção roda a checagem
+(`_checagem_autonoma_se_preciso`) quando a última tiver mais de
+`anime_checagem_autonoma_intervalo_horas`. Com a GAIA de pé, nada muda - ela
+continua decidindo quando checar. Os downloads iniciados/alertas de uma
+checagem autônoma são entregues na próxima checagem da GAIA."""
 import os
 import socket
 import sys
@@ -92,16 +99,40 @@ def _avisar_episodio_assistido_webhook(titulo, numero_episodio):
         pass
 
 
+def _gaia_rodando():
+    """GAIA de pé = porta da ponte HTTP dela aceitando conexão (a mesma do
+    webhook `MOIRAI_GAIA_WEBHOOK_URL`)."""
+    import urllib.parse
+    url = urllib.parse.urlparse(os.environ.get("MOIRAI_GAIA_WEBHOOK_URL", "http://127.0.0.1:8766/moirai/episodio_assistido"))
+    try:
+        with socket.create_connection((url.hostname or "127.0.0.1", url.port or 80), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def _checagem_autonoma_se_preciso():
+    if not config.obter_anime_checagem_autonoma_ativa() or _gaia_rodando():
+        return
+    horas = anime_tracker.horas_desde_ultima_checagem()
+    if horas is not None and horas < config.obter_anime_checagem_autonoma_intervalo_horas():
+        return
+    print(" [SISTEMA] 🎬 GAIA fechada - MOIRAI rodando a checagem de lançamentos sozinho.")
+    anime_tracker.executar_checagem_completa(origem="autonoma")
+
+
 def _loop_manutencao():
     """Mesmo trabalho de `_monitorar_downloads_animes_loop` (GAIA, antes da
     extração) - downloads em andamento, sincronia de biblioteca local,
-    progresso do MyAnimeList, a cada 5min."""
+    progresso do MyAnimeList, a cada 5min. + checagem autônoma de lançamentos
+    quando a GAIA está fechada (2026-09-24)."""
     while True:
         try:
             if config.obter_anime_tracker_ativo():
                 anime_tracker.verificar_downloads_em_andamento()
                 anime_tracker.sincronizar_biblioteca_local()
                 anime_tracker.sincronizar_progresso_mal()
+                _checagem_autonoma_se_preciso()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de manutenção: {e}")
         time.sleep(INTERVALO_LOOP_SEGUNDOS)

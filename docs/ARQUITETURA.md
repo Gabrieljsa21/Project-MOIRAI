@@ -204,6 +204,101 @@ da categoria pelo texto foram atualizados pra continuar corretos
 Nenhuma rota/endpoint/módulo (`anime_tracker.py`, `obter_anime_tracker_ativo`
 etc.) mudou de nome - só a string exibida no popup do IRIS.
 
+## Checagem de lançamentos: página do anime + UTF-8 forçado + histórico (2026-09-24)
+
+Relato do usuário: ficou 1 semana fora e vários episódios não baixaram.
+Diagnóstico com os dados reais (página de cada anime vs.
+`ultimo_episodio_visto`):
+
+- **Janela rotativa da home.** `verificar_novos_lancamentos` só lia
+  "Últimos Lançamentos" (~20 vagas). O fechamento de gap de
+  `_episodios_a_baixar` só funciona se o número do último lançado avança -
+  com o PC desligado, o episódio da semana entrava e saía da home sem
+  nenhuma checagem ver, e 10 animes ficaram parados. Correção:
+  `_atualizar_lancamentos_fora_da_home` consulta a página de cada
+  "tenho_interesse" que não apareceu na home (1 request por anime; pula quem
+  já tem `ultimo_episodio_visto >= mal_num_episodios`). Só avança o número,
+  nunca regride.
+- **Charset ausente.** Desde 2026-09-23 o site responde
+  `Content-Type: text/html` sem `charset`; o `requests` assume ISO-8859-1,
+  "Episódio" vira "EpisÃ³dio" e `_extrair_opcoes_download` nunca achava o
+  bloco. `_obter_html_darkmahou` centraliza os 5 pontos de scraping e força
+  `resp.encoding = "utf-8"`. O download de capa (bytes) não passa por ele.
+- **Timeout da GAIA.** A checagem completa leva ~50s (home + páginas +
+  qBittorrent + MAL/AniList); o cliente da GAIA desistia em 30s e recebia o
+  dict vazio de fallback, perdendo a notificação de "começou a baixar".
+  Corrigido do lado da GAIA (`moirai_client.executar_checagem_completa`,
+  timeout de 600s).
+- **Histórico.** `anime_tracker_checagem_diaria.json` continua sendo só o
+  gate de intervalo da GAIA (última data). O registro de cada checagem vai
+  em `data/anime_tracker_historico_checagens.json` (lista, mais antiga
+  primeiro no arquivo, limitada a 1000), gravado num `finally` pra
+  registrar também checagens que quebram no meio (`erro`). Exposto por
+  `GET /historico_checagens[?limite=N]`, mais recente primeiro.
+
+- **Registro de downloads e buracos no meio.** `_episodios_a_baixar`
+  partia do MAIOR episódio conhecido - um intermediário que falhasse (sem
+  magnet ainda) deixava de ser tentado assim que um posterior baixava. Agora
+  `baixar_episodio` grava cada disparo em `episodios_download_disparado_em`
+  (`"AAAA-MM-DD HH:MM (hash)"`), e a lista a baixar é todo número entre o
+  MENOR conhecido e o último lançado ausente de `_episodios_ja_tratados` -
+  união de `episodios`, `downloads_em_andamento`, do registro novo e de
+  todos os dicts de auditoria `episodios_*_em`/`episodios_erro_renomear`.
+  `episodios` sozinho não serve como registro porque
+  `sincronizar_biblioteca_local` remove "baixado" quando o arquivo é
+  apagado; sem a auditoria, episódio apagado pelo usuário seria baixado de
+  novo. Começar do menor (e não do 1) preserva quem começou a acompanhar no
+  meio da temporada. Antes de ativar, a lógica nova foi simulada nos dados
+  reais: só 2 buracos genuínos (Katainaka no Ossan E04, Yani Neko E05),
+  baixados na checagem seguinte. Como efeito colateral, corrige também o
+  caso em que todos os "baixado" de um anime eram revertidos e a lista vazia
+  disparava backfill desde o episódio 1.
+
+## Robustez de download: travados, numeração divergente, alertas e checagem autônoma (2026-09-24)
+
+Segunda leva do mesmo dia, pedida pelo usuário ("pode implementar tudo")
+depois da revisão de pendências:
+
+- **Download travado.** `downloads_em_andamento[N]` ganhou `progresso` e
+  `progresso_em` (renovado a cada avanço real). Sem avanço por
+  `anime_download_travado_horas`, ou com o hash ausente do qBittorrent, o
+  item vai para `_tratar_downloads_travados`, que roda DEPOIS de
+  `verificar_downloads_em_andamento` salvar (porque `baixar_episodio`
+  carrega/salva o JSON sozinho): remove o torrent com `delete_files=False`,
+  guarda o hash em `episodios_magnets_tentados[N]` e chama `baixar_episodio`,
+  que exclui os hashes tentados. Sem alternativa, a falha vai para
+  `episodios_falha_download`. Downloads disparados antes desta versão, sem
+  `progresso_em`, começam a contar a partir da primeira verificação.
+- **Numeração divergente.** A trava de 2026-09-07 comparava o número no
+  nome do arquivo com o esperado, e bloqueava igual tanto `content_path`
+  errado quanto fansub com numeração própria. `_arquivo_pertence_ao_torrent`
+  consulta `torrents_files` do hash pedido: se o arquivo está no torrent, o
+  conteúdo é o que o site associou ao episódio e a renomeação segue. Para
+  reduzir o caso na origem, `_escolher_melhor_magnet` desempata opções da
+  mesma qualidade pelo número declarado no `dn` do magnet (a qualidade
+  continua como critério principal).
+- **Falhas e alertas.** `_registrar_falha_download` grava `desde`/`motivo`
+  por episódio (sem magnet, todos os magnets já travaram, erro no
+  qBittorrent); a entrada sai quando o download dispara. A checagem devolve
+  `texto_alertas` juntando `_alertas_de_site` (home vazia; 2+ tentativas e
+  nenhuma deu certo) e `_coletar_alertas_falha_persistente` (acima de
+  `anime_alerta_falha_horas`, uma vez por episódio via `alertado`).
+- **Checagem autônoma.** Exceção ao padrão "GAIA decide quando": com a
+  GAIA fechada (conexão TCP recusada na porta do webhook), o loop de 5min
+  roda a checagem se o histórico mostra mais de
+  `anime_checagem_autonoma_intervalo_horas` desde a última. Não mexe em
+  `anime_tracker_checagem_diaria.json` (o gate da GAIA), para a GAIA não
+  pular a própria checagem ao voltar. Textos acionáveis ficam em
+  `anime_tracker_resultados_nao_entregues.json` e são prefixados no
+  resultado da próxima checagem com origem "gaia". `_lock_checagem` evita
+  duas checagens simultâneas disparando o mesmo download.
+- **Config nova** (`moirai/config.py`, editável no Painel da GAIA):
+  `anime_download_travado_horas` (24), `anime_alerta_falha_horas` (48),
+  `anime_checagem_autonoma_ativa` (true),
+  `anime_checagem_autonoma_intervalo_horas` (6).
+- **Logs.** `runtime_log.remover_logs_antigos` apaga logs diários com mais
+  de 30 dias (só arquivos no padrão `AAAA-MM-DD.log`).
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
