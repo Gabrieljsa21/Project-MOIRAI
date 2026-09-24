@@ -3,6 +3,31 @@ import datetime
 import os
 import sys
 
+# 🔥 2026-09-24: a pasta logs/ crescia sem limite (1 arquivo por dia, ~50-80KB
+# nos dias de mais atividade).
+DIAS_RETENCAO_LOGS = 30
+
+
+def remover_logs_antigos(pasta_logs, dias=DIAS_RETENCAO_LOGS, hoje=None):
+    """Apaga `AAAA-MM-DD.log` com data anterior a `dias` atrás. Só mexe em
+    arquivo com nome exatamente nesse padrão; qualquer erro é ignorado (log
+    nunca pode derrubar o processo)."""
+    limite = (hoje or datetime.date.today()) - datetime.timedelta(days=dias)
+    try:
+        nomes = os.listdir(pasta_logs)
+    except OSError:
+        return
+    for nome in nomes:
+        try:
+            data = datetime.date.fromisoformat(nome[:-4]) if nome.endswith(".log") else None
+        except ValueError:
+            continue
+        if data and data < limite:
+            try:
+                os.remove(os.path.join(pasta_logs, nome))
+            except OSError:
+                pass
+
 
 class RedirecionadorLog:
     def __init__(self, stream_original, pasta_projeto):
@@ -28,6 +53,7 @@ class RedirecionadorLog:
             self._data_arquivo = hoje
         except Exception:
             self._arquivo = None
+        remover_logs_antigos(os.path.join(self._pasta_projeto, "logs"))
 
     def _com_horario(self, texto):
         partes = []

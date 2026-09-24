@@ -52,8 +52,9 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.parse
 import winreg
-from datetime import datetime
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
 import requests
@@ -67,18 +68,44 @@ from moirai.config import (
     obter_lembrete_limite_episodios, obter_lembrete_limite_dias,
     obter_renomear_confianca_minima, obter_renomear_confianca_parcial, obter_renomear_margem_parcial,
     obter_limiar_minutos_assistido, obter_anime_lembrete_atraso_ativo, obter_anime_notificar_pendentes_ativo,
+    obter_anime_download_travado_horas, obter_anime_alerta_falha_horas,
 )
 from moirai.paths import caminho_dados
 
 URL_BASE = "https://darkmahou.io"
 ARQUIVO_ANIMES = caminho_dados("anime_tracker_animes.json")
 ARQUIVO_CHECAGEM_DIARIA = caminho_dados("anime_tracker_checagem_diaria.json")
+ARQUIVO_HISTORICO_CHECAGENS = caminho_dados("anime_tracker_historico_checagens.json")
+# ~6 meses com a checagem por intervalo da GAIA (algumas por dia) - só pra o
+# arquivo não crescer pra sempre.
+_LIMITE_HISTORICO_CHECAGENS = 1000
 CATEGORIA_QBITTORRENT = "gaia-animes"
 
 # 🔥 Site protegido por Cloudflare mas sem desafio JS de verdade (testado 2026-08-02) -
 # um User-Agent de navegador comum já basta, sem precisar de navegador automatizado.
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 _TIMEOUT_REQUEST = 20
+
+
+def _obter_html_darkmahou(url):
+    """GET numa página do DarkMahou, devolvendo o HTML já como texto UTF-8.
+    Lança exceção em falha de rede/HTTP - cada chamador mantém o próprio
+    try/except e mensagem de log.
+
+    🔥 2026-09-24, bug real (usuário voltou de 1 semana fora e vários
+    episódios não tinham baixado): o site passou a responder
+    `Content-Type: text/html` SEM `charset` (a partir de 2026-09-23) - sem
+    charset, o `requests` cai no padrão HTTP (ISO-8859-1) e "Episódio" vira
+    "EpisÃ³dio". O regex `Epis[oó]dio` de _extrair_opcoes_download parava de
+    casar e TODO download terminava em "Nenhum magnet encontrado"; títulos
+    novos também eram gravados corrompidos ("4Âª Temporada"). O HTML do site
+    é UTF-8 de verdade, então força a decodificação em vez de confiar no
+    cabeçalho."""
+    resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    return resp.text
+
 
 EXTENSOES_VIDEO = (".mkv", ".mp4", ".avi")
 PASTA_CAPAS = caminho_dados("anime_tracker_capas")
@@ -117,6 +144,34 @@ def salvar_ultima_checagem_diaria(data_str):
     os.makedirs(os.path.dirname(ARQUIVO_CHECAGEM_DIARIA), exist_ok=True)
     with open(ARQUIVO_CHECAGEM_DIARIA, "w", encoding="utf-8") as f:
         json.dump({"ultima_data": data_str}, f, indent=4, ensure_ascii=False)
+
+
+def _carregar_historico_checagens():
+    try:
+        with open(ARQUIVO_HISTORICO_CHECAGENS, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def obter_historico_checagens(limite=None):
+    """Registro de TODA checagem de lançamentos já feita (mais recente
+    primeiro) - 2026-09-24, pedido do usuário: "manter registro dos dias e
+    horários que checou animes novos". `anime_tracker_checagem_diaria.json`
+    só guarda a ÚLTIMA data (é o gate de intervalo da GAIA), então depois de
+    um período fora não dava pra saber quando o MOIRAI checou nem o que cada
+    checagem encontrou/baixou/falhou. Formato de cada entrada: ver
+    executar_checagem_completa."""
+    historico = list(reversed(_carregar_historico_checagens()))
+    return historico[:limite] if limite else historico
+
+
+def _registrar_checagem(entrada):
+    historico = _carregar_historico_checagens()
+    historico.append(entrada)
+    os.makedirs(os.path.dirname(ARQUIVO_HISTORICO_CHECAGENS), exist_ok=True)
+    with open(ARQUIVO_HISTORICO_CHECAGENS, "w", encoding="utf-8") as f:
+        json.dump(historico[-_LIMITE_HISTORICO_CHECAGENS:], f, indent=4, ensure_ascii=False)
 
 
 def obter_animes_rastreados():
@@ -340,12 +395,11 @@ def _buscar_temporada_estreia(url):
     `temporada=None` é um resultado DEFINITIVO (página respondeu, campo não
     encontrado) - não tenta de novo depois disso."""
     try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
-        resp.raise_for_status()
+        html = _obter_html_darkmahou(url)
     except Exception as e:
         print(f" [SISTEMA] Erro ao buscar temporada de estreia ({url}): {e}")
         return False, None
-    return True, _extrair_temporada_estreia(BeautifulSoup(resp.text, "html.parser"))
+    return True, _extrair_temporada_estreia(BeautifulSoup(html, "html.parser"))
 
 
 def chave_ordenacao_temporada(temporada):
@@ -404,13 +458,12 @@ def listar_ultimos_lancamentos():
     espírito defensivo do resto do projeto (ex.: buscar_noticias_topico,
     features/jornalista/jornalista.py)."""
     try:
-        resp = requests.get(URL_BASE, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
-        resp.raise_for_status()
+        html = _obter_html_darkmahou(URL_BASE)
     except Exception as e:
         print(f" [SISTEMA] Erro ao acessar DarkMahou (lançamentos): {e}")
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     secao = soup.find("div", class_="latestdark")
     listupd = secao.find_next("div", class_="listupd") if secao else None
     if listupd is None:
@@ -434,17 +487,85 @@ def listar_ultimos_lancamentos():
     return itens
 
 
-def verificar_novos_lancamentos():
+def _ultimo_episodio_da_pagina(soup):
+    """MAIOR número entre todos os blocos `div.soraddl` da página do anime
+    (não assume que vêm em ordem). None se não achar nenhum."""
+    numeros = [
+        _numero_episodio_de_texto(bloco.find("h3").get_text(strip=True))
+        for bloco in soup.find_all("div", class_="soraddl") if bloco.find("h3")
+    ]
+    numeros = [n for n in numeros if n is not None]
+    return max(numeros) if numeros else None
+
+
+def _precisa_consultar_pagina(registro):
+    """Anime acompanhado que pode ter episódio novo fora da home - pula quem
+    já lançou tudo que o MAL diz que existe (temporada encerrada), pra não
+    gastar 1 request por anime terminado a cada checagem."""
+    if registro.get("interesse") != "tenho_interesse":
+        return False
+    total = registro.get("mal_num_episodios")
+    ultimo = registro.get("ultimo_episodio_visto")
+    return not (total and ultimo and ultimo >= total)
+
+
+def _atualizar_lancamentos_fora_da_home(animes, chaves_na_home, relatorio):
+    """Consulta a PÁGINA de cada anime "tenho_interesse" que NÃO apareceu na
+    home nesta checagem e atualiza `ultimo_episodio_visto` se houver episódio
+    mais novo.
+
+    🔥 2026-09-24, bug real (usuário ficou 1 semana fora): "Últimos
+    Lançamentos" é uma janela rotativa de ~20 vagas. Com o PC desligado
+    vários dias, o episódio da semana de cada anime entrava e saía da home
+    sem nenhuma checagem ver - ao voltar, `ultimo_episodio_visto` continuava
+    parado e _episodios_a_baixar não tinha gap nenhum pra fechar (10 animes
+    ficaram 1-2 episódios atrás). A página do anime lista TODOS os episódios,
+    então é a fonte que não depende de a checagem acontecer na hora certa.
+    Só avança o número, nunca regride (página com layout quebrado não apaga
+    o que já se sabia)."""
+    for chave, registro in animes.items():
+        if chave in chaves_na_home or not _precisa_consultar_pagina(registro):
+            continue
+        try:
+            html = _obter_html_darkmahou(registro["url"])
+        except Exception as e:
+            print(f" [SISTEMA] Erro ao consultar página de {registro['titulo']}: {e}")
+            relatorio["paginas_com_erro"].append(registro["titulo"])
+            continue
+        relatorio["paginas_consultadas"] += 1
+        ultimo_pagina = _ultimo_episodio_da_pagina(BeautifulSoup(html, "html.parser"))
+        anterior = registro.get("ultimo_episodio_visto")
+        if ultimo_pagina is not None and (anterior is None or ultimo_pagina > anterior):
+            registro["ultimo_episodio_visto"] = ultimo_pagina
+            relatorio["episodios_novos"].append(
+                {"titulo": registro["titulo"], "de": anterior, "para": ultimo_pagina, "fonte": "pagina"}
+            )
+            print(f" [SISTEMA] 🎬 {registro['titulo']}: Episódio {ultimo_pagina} encontrado na página do anime (fora da home).")
+
+
+def verificar_novos_lancamentos(relatorio=None):
     """Roda 1x por dia (ver _verificar_e_executar_animes_diario, run.py). Atualiza o estado de
     CADA anime visto na home com o último episódio (mesmo os já marcados
     interesse/sem interesse - o estado precisa continuar atual pra
     processar_downloads_pendentes saber se tem episódio novo). Devolve só os
     "pendente" (nem marcados com nem sem interesse) - pedido do usuário: esses
-    precisam continuar sendo informados TODO dia até serem marcados."""
+    precisam continuar sendo informados TODO dia até serem marcados.
+
+    Os "tenho_interesse" que não estão na home são conferidos pela própria
+    página (_atualizar_lancamentos_fora_da_home). `relatorio` (dict, opcional)
+    recebe o que esta checagem encontrou - usado pelo histórico de checagens
+    (executar_checagem_completa)."""
+    if relatorio is None:
+        relatorio = {}
+    relatorio.update({"itens_home": 0, "paginas_consultadas": 0, "paginas_com_erro": [], "episodios_novos": []})
     animes = _carregar_animes()
     pendentes = []
-    for item in listar_ultimos_lancamentos():
+    itens_home = listar_ultimos_lancamentos()
+    relatorio["itens_home"] = len(itens_home)
+    chaves_na_home = set()
+    for item in itens_home:
         chave = _chave_de_url(item["url"])
+        chaves_na_home.add(chave)
         registro = animes.get(chave)
         if registro is None:
             registro = {
@@ -481,10 +602,16 @@ def verificar_novos_lancamentos():
         if registro.get("interesse") != "sem_interesse":
             if item.get("capa_url"):
                 registro["capa_url"] = item["capa_url"]
+            anterior = registro.get("ultimo_episodio_visto")
             if item["episodio"] is not None:
                 registro["ultimo_episodio_visto"] = item["episodio"]
+                if registro.get("interesse") == "tenho_interesse" and (anterior is None or item["episodio"] > anterior):
+                    relatorio["episodios_novos"].append(
+                        {"titulo": registro["titulo"], "de": anterior, "para": item["episodio"], "fonte": "home"}
+                    )
         if registro.get("interesse", "pendente") == "pendente":
             pendentes.append((chave, registro))
+    _atualizar_lancamentos_fora_da_home(animes, chaves_na_home, relatorio)
     _salvar_animes(animes)
     return pendentes
 
@@ -503,23 +630,17 @@ def adicionar_anime_manual(url):
     chave None em caso de falha (rede, página não encontrada, estrutura
     mudou)."""
     try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
-        resp.raise_for_status()
+        html = _obter_html_darkmahou(url)
     except Exception as e:
         return None, f"Erro ao acessar a página do anime: {e}"
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     titulo_tag = soup.find("h1")
     if not titulo_tag:
         return None, "Não achei o título na página - a estrutura do site pode ter mudado."
     titulo = titulo_tag.get_text(strip=True)
 
-    numeros = [
-        _numero_episodio_de_texto(bloco.find("h3").get_text(strip=True))
-        for bloco in soup.find_all("div", class_="soraddl") if bloco.find("h3")
-    ]
-    numeros = [n for n in numeros if n is not None]
-    ultimo_episodio = max(numeros) if numeros else None
+    ultimo_episodio = _ultimo_episodio_da_pagina(soup)
 
     thumb = soup.find("div", class_="thumb")
     capa_img = thumb.find("img", src=True) if thumb else None
@@ -564,10 +685,17 @@ def formatar_texto_pendentes(pendentes):
 # ======================================================
 # 🔎 SCRAPING - MAGNET DE UM EPISÓDIO (página do anime)
 # ======================================================
-def _escolher_melhor_magnet(opcoes):
+def _escolher_melhor_magnet(opcoes, numero_episodio=None):
     """`opcoes`: [(rotulo, magnet), ...] da primeira linha (legendado) da tabela de
     download. Prioriza 1080p+HEVC > 1080p (qualquer encoder) > primeira opção
-    disponível, nessa ordem - pedido do usuário ("priorizando os 1080p HEVC")."""
+    disponível, nessa ordem - pedido do usuário ("priorizando os 1080p HEVC").
+
+    🔥 Desempate (2026-09-24, caso real Yomi no Tsugai): entre opções da MESMA
+    qualidade, prefere a que declara no próprio nome (`dn` do magnet) o
+    número do episódio pedido. A Judas numera Yomi 2 atrás do site (bloco
+    "Episódio 23" com "S01E21"), o que travava a renomeação; DKB/Erai no mesmo
+    bloco usam a numeração do site. A qualidade continua mandando: o
+    desempate nunca troca 1080p HEVC por uma opção pior."""
     if not opcoes:
         return None
 
@@ -579,7 +707,14 @@ def _escolher_melhor_magnet(opcoes):
             return 1
         return 0
 
-    return max(opcoes, key=lambda par: pontuar(par[0]))[1]
+    def numero_bate(magnet):
+        if numero_episodio is None:
+            return 0
+        nome = urllib.parse.parse_qs(urllib.parse.urlparse(magnet).query).get("dn", [""])[0]
+        return 1 if _numero_episodio_no_nome_arquivo(nome) == int(numero_episodio) else 0
+
+    # max() devolve o PRIMEIRO empate - mantém a ordem da página como último critério.
+    return max(opcoes, key=lambda par: (pontuar(par[0]), numero_bate(par[1])))[1]
 
 
 def _extrair_opcoes_download(url_anime, numero_episodio):
@@ -587,13 +722,12 @@ def _extrair_opcoes_download(url_anime, numero_episodio):
     (legendado) do bloco do episódio pedido. Lista vazia se a página/episódio não
     for encontrado - nunca lança exceção."""
     try:
-        resp = requests.get(url_anime, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
-        resp.raise_for_status()
+        html = _obter_html_darkmahou(url_anime)
     except Exception as e:
         print(f" [SISTEMA] Erro ao acessar página do anime ({url_anime}): {e}")
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     # 🔥 Prefixo, não igualdade exata (2026-08-05, bug real encontrado - o
     # último episódio de uma temporada às vezes vem com um sufixo, ex.:
     # "Episódio 13 Final" - igualdade exata contra "Episódio 13" nunca batia,
@@ -736,6 +870,27 @@ def _cliente_qbittorrent():
     return cliente
 
 
+def _hash_do_magnet(magnet):
+    match_hash = re.search(r"btih:([a-fA-F0-9]{40})", magnet or "")
+    return match_hash.group(1).lower() if match_hash else None
+
+
+def _registrar_falha_download(chave, numero_episodio, motivo):
+    """Guarda a 1ª vez que um episódio falhou (e o motivo mais recente) em
+    `episodios_falha_download` - 2026-09-24, base do alerta de falha
+    persistente (_coletar_alertas_falha_persistente). A entrada some quando o
+    download finalmente dispara (baixar_episodio)."""
+    animes = _carregar_animes()
+    if chave not in animes:
+        return
+    falhas = animes[chave].setdefault("episodios_falha_download", {})
+    entrada = falhas.setdefault(str(numero_episodio), {
+        "desde": datetime.now().strftime("%Y-%m-%d %H:%M"), "alertado": False,
+    })
+    entrada["motivo"] = motivo
+    _salvar_animes(animes)
+
+
 def baixar_episodio(chave, registro, numero_episodio):
     """Extrai o magnet do episódio (1080p HEVC de preferência) e manda pro
     qBittorrent - `save_path` é a pasta de downloads configurada no Painel
@@ -753,15 +908,23 @@ def baixar_episodio(chave, registro, numero_episodio):
         return False
 
     opcoes = _extrair_opcoes_download(registro["url"], numero_episodio)
-    magnet = _escolher_melhor_magnet(opcoes)
+    # 🔥 2026-09-24: magnet já tentado e dado como travado
+    # (_tratar_downloads_travados) fica de fora - senão o mesmo torrent morto
+    # seria escolhido de novo.
+    tentados = set(registro.get("episodios_magnets_tentados", {}).get(str(numero_episodio), []))
+    total_opcoes = len(opcoes)
+    opcoes = [(rotulo, m) for rotulo, m in opcoes if _hash_do_magnet(m) not in tentados]
+    magnet = _escolher_melhor_magnet(opcoes, numero_episodio)
     if not magnet:
-        print(f" [SISTEMA] Nenhum magnet encontrado pra {registro['titulo']} Episódio {numero_episodio}.")
+        motivo = "todos os magnets disponíveis já travaram" if total_opcoes else "nenhum magnet na página do anime"
+        print(f" [SISTEMA] Nenhum magnet encontrado pra {registro['titulo']} Episódio {numero_episodio} ({motivo}).")
+        _registrar_falha_download(chave, numero_episodio, motivo)
         return False
 
-    match_hash = re.search(r"btih:([a-fA-F0-9]{40})", magnet)
-    hash_torrent = match_hash.group(1).lower() if match_hash else None
+    hash_torrent = _hash_do_magnet(magnet)
     if not hash_torrent:
         print(f" [SISTEMA] Magnet de {registro['titulo']} Episódio {numero_episodio} sem hash reconhecível - pulando.")
+        _registrar_falha_download(chave, numero_episodio, "magnet sem hash reconhecível")
         return False
 
     pasta_destino = obter_anime_pasta_downloads()
@@ -792,13 +955,20 @@ def baixar_episodio(chave, registro, numero_episodio):
         return False
     except Exception as e:
         print(f" [SISTEMA] Erro ao mandar {registro['titulo']} Episódio {numero_episodio} pro qBittorrent: {e}")
+        _registrar_falha_download(chave, numero_episodio, f"erro no qBittorrent: {e}")
         return False
 
     animes = _carregar_animes()
     if chave in animes:
+        agora = datetime.now().strftime("%Y-%m-%d %H:%M")
         animes[chave].setdefault("downloads_em_andamento", {})[str(numero_episodio)] = {
             "hash": hash_torrent, "pasta": pasta_destino,
+            # 🔥 2026-09-24: base pra detectar download travado
+            # (_tratar_downloads_travados) - atualizado a cada avanço real.
+            "progresso": 0.0, "progresso_em": agora,
         }
+        animes[chave].setdefault("episodios_download_disparado_em", {})[str(numero_episodio)] = f"{agora} ({hash_torrent})"
+        animes[chave].get("episodios_falha_download", {}).pop(str(numero_episodio), None)
         _salvar_animes(animes)
     print(f" [SISTEMA] 🎬 Baixando {registro['titulo']} Episódio {numero_episodio} ({[r for r, m in opcoes if m == magnet][0] if opcoes else '?'})...")
     return True
@@ -823,16 +993,46 @@ def _episodios_a_baixar(registro):
     episódio mais recente baixou, deixando os anteriores de fora - "eu não vi
     episódio nenhum". Antes disso baixava só o último, pra evitar redownload
     de quem já tinha assistido em outro lugar - o usuário decidiu que o
-    padrão certo é presumir que quer assistir desde o início)."""
+    padrão certo é presumir que quer assistir desde o início).
+
+    🔥 2026-09-24, pedido do usuário ("mantenha um registro dos episódios
+    baixados p evitar o problema do ep no meio"): antes partia do MAIOR
+    conhecido - se o E17 falhasse (sem magnet ainda) e o E18 baixasse, o E17
+    nunca mais era tentado. Agora devolve TODO número entre o MENOR conhecido
+    e o último lançado que não aparece em nenhum registro
+    (_episodios_ja_tratados) - buraco no meio é retentado a cada checagem até
+    baixar. Começar do menor (e não do 1) preserva quem começou a acompanhar
+    no meio da temporada."""
     ultimo_lancado = registro.get("ultimo_episodio_visto")
     if ultimo_lancado is None:
         return []
-    numeros_conhecidos = [int(n) for n in registro.get("episodios", {})]
-    numeros_conhecidos += [int(n) for n in registro.get("downloads_em_andamento", {})]
-    if not numeros_conhecidos:
+    tratados = _episodios_ja_tratados(registro)
+    if not tratados:
         return list(range(1, ultimo_lancado + 1))
-    maior_conhecido = max(numeros_conhecidos)
-    return list(range(maior_conhecido + 1, ultimo_lancado + 1))
+    return [n for n in range(min(tratados), ultimo_lancado + 1) if n not in tratados]
+
+
+# Todo campo por episódio que prova que ele já foi baixado/tratado alguma vez.
+# `episodios` sozinho não serve: sincronizar_biblioteca_local REMOVE o
+# "baixado" quando o usuário apaga o arquivo sem mover pra assistidos, e aí
+# o episódio pareceria "nunca baixado" e seria baixado de novo. Os dicts
+# "_em" são auditoria e nunca perdem entrada.
+_CAMPOS_EPISODIO_TRATADO = (
+    "episodios", "downloads_em_andamento", "episodios_download_disparado_em",
+    "episodios_baixado_em", "episodios_assistido_em", "episodios_renomeado_em",
+    "episodios_revertido_em", "episodios_removido_qbittorrent_em", "episodios_erro_renomear",
+)
+
+
+def _episodios_ja_tratados(registro):
+    """Números de episódio que já foram baixados, estão baixando, foram
+    assistidos ou apagados pelo usuário - nenhum deles deve ser baixado de
+    novo. `episodios_download_disparado_em` (2026-09-24) é o registro
+    permanente de todo download disparado por baixar_episodio."""
+    numeros = set()
+    for campo in _CAMPOS_EPISODIO_TRATADO:
+        numeros.update(int(n) for n in registro.get(campo, {}) if str(n).isdigit())
+    return numeros
 
 
 def _baixar_pendentes_do_registro(chave, registro):
@@ -844,9 +1044,12 @@ def _baixar_pendentes_do_registro(chave, registro):
     números de episódio disparados de verdade) - a lista existe pra
     `processar_downloads_pendentes` conseguir montar a notificação "começou a
     baixar" com título+episódio (2026-09-05, pedido do usuário), não só o
-    contador de sempre."""
-    numeros_disparados = [n for n in _episodios_a_baixar(registro) if baixar_episodio(chave, registro, n)]
-    return len(numeros_disparados), numeros_disparados
+    contador de sempre. O 3º item (números que NÃO dispararam - sem magnet,
+    erro no qBittorrent etc.) vai pro histórico de checagens (2026-09-24)."""
+    numeros_disparados, numeros_falhos = [], []
+    for n in _episodios_a_baixar(registro):
+        (numeros_disparados if baixar_episodio(chave, registro, n) else numeros_falhos).append(n)
+    return len(numeros_disparados), numeros_disparados, numeros_falhos
 
 
 def processar_downloads_pendentes():
@@ -856,18 +1059,20 @@ def processar_downloads_pendentes():
     Devolve (quantos downloads novos foram disparados, [(titulo, numero), ...]
     de cada um) - a lista de itens é o que permite notificar QUAIS animes
     começaram a baixar (ver `formatar_texto_download_iniciado`), em vez de só
-    um contador solto no log."""
+    um contador solto no log - e [(titulo, numero), ...] dos que falharam."""
     if not qbittorrent_configurado():
-        return 0, []
+        return 0, [], []
     disparados = 0
     itens = []
+    falhas = []
     for chave, registro in _carregar_animes().items():
         if registro.get("interesse") != "tenho_interesse":
             continue
-        qtd, numeros = _baixar_pendentes_do_registro(chave, registro)
+        qtd, numeros, numeros_falhos = _baixar_pendentes_do_registro(chave, registro)
         disparados += qtd
         itens.extend((registro["titulo"], numero) for numero in numeros)
-    return disparados, itens
+        falhas.extend((registro["titulo"], numero) for numero in numeros_falhos)
+    return disparados, itens, falhas
 
 
 def formatar_texto_download_iniciado(itens):
@@ -902,7 +1107,7 @@ def baixar_pendentes_de(chave):
     registro = _carregar_animes().get(chave)
     if not registro or registro.get("interesse") != "tenho_interesse":
         return 0
-    disparados, _numeros = _baixar_pendentes_do_registro(chave, registro)
+    disparados, _numeros, _falhos = _baixar_pendentes_do_registro(chave, registro)
     return disparados
 
 
@@ -1044,6 +1249,8 @@ def verificar_downloads_em_andamento():
 
     concluidos = 0
     mudou = False
+    travados = []
+    limite_travado = timedelta(hours=obter_anime_download_travado_horas())
     for chave, numero_episodio_str, info in pendentes:
         registro = animes[chave]
         if registro.get("episodios", {}).get(numero_episodio_str) in ("baixado", "assistido"):
@@ -1060,6 +1267,23 @@ def verificar_downloads_em_andamento():
             print(f" [SISTEMA] Erro ao consultar torrent {info['hash']}: {e}")
             continue
         if not torrents or torrents[0].progress < 1.0:
+            # 🔥 2026-09-24: download travado (torrent sem ninguém
+            # compartilhando, ou removido do qBittorrent por fora) ficava
+            # "baixando" pra sempre. Cada avanço real renova `progresso_em`;
+            # sem avanço por `anime_download_travado_horas`, vai pra
+            # _tratar_downloads_travados trocar pelo próximo magnet.
+            progresso = torrents[0].progress if torrents else None
+            if progresso is not None and progresso > info.get("progresso", 0.0):
+                info["progresso"] = progresso
+                info["progresso_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                mudou = True
+            elif "progresso_em" not in info:
+                # Download disparado antes desta mudança: começa a contar agora.
+                info["progresso_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                info.setdefault("progresso", progresso or 0.0)
+                mudou = True
+            elif datetime.now() - datetime.strptime(info["progresso_em"], "%Y-%m-%d %H:%M") >= limite_travado:
+                travados.append((chave, numero_episodio_str, info["hash"], progresso))
             continue
 
         agora = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1068,15 +1292,34 @@ def verificar_downloads_em_andamento():
         if arquivo_video:
             episodio_no_arquivo = _numero_episodio_no_nome_arquivo(arquivo_video)
             if episodio_no_arquivo is not None and episodio_no_arquivo != int(numero_episodio_str):
-                motivo = (
-                    f"{agora}: conteúdo do qBittorrent diverge do episódio acompanhado "
-                    f"(esperado E{int(numero_episodio_str):02d}, nome informa E{episodio_no_arquivo:02d}: "
-                    f"'{arquivo_video}'). Mantido em acompanhamento; não vou renomear nem marcar como baixado."
-                )
-                registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = motivo
-                print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: {motivo}")
-                mudou = True
-                continue
+                if _arquivo_pertence_ao_torrent(cliente, info["hash"], arquivo_video):
+                    # 🔥 2026-09-24 (Bleach E08 travado desde 23/09): fansub
+                    # com numeração absoluta da série ("S17E48" pro E08 da
+                    # temporada). O arquivo está DENTRO do torrent que o
+                    # MOIRAI pediu pra esse episódio, então o conteúdo é o
+                    # certo - só o número no nome difere. A trava continua
+                    # valendo quando o arquivo NÃO pertence ao torrent (o
+                    # caso real de 2026-09-07: `content_path` apontando pra
+                    # outro arquivo).
+                    registro.setdefault("episodios_numeracao_divergente_aceita", {})[numero_episodio_str] = (
+                        f"{agora}: nome informa E{episodio_no_arquivo:02d}, mas o arquivo pertence ao torrent "
+                        f"{info['hash']} pedido pra esse episódio ('{os.path.basename(arquivo_video)}')"
+                    )
+                    registro.get("episodios_erro_renomear", {}).pop(numero_episodio_str, None)
+                    print(f" [SISTEMA] 🎬 {registro['titulo']} Episódio {numero_episodio_str}: arquivo com numeração absoluta (E{episodio_no_arquivo:02d}) aceito - pertence ao torrent pedido.")
+                else:
+                    detalhe = (
+                        f"conteúdo do qBittorrent diverge do episódio acompanhado "
+                        f"(esperado E{int(numero_episodio_str):02d}, nome informa E{episodio_no_arquivo:02d}: "
+                        f"'{arquivo_video}'). Mantido em acompanhamento; não vou renomear nem marcar como baixado."
+                    )
+                    anterior = registro.get("episodios_erro_renomear", {}).get(numero_episodio_str, "")
+                    # Só avisa quando o motivo muda - antes repetia no log a cada 5min.
+                    if not anterior.endswith(detalhe):
+                        registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = f"{agora}: {detalhe}"
+                        print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: {detalhe}")
+                        mudou = True
+                    continue
             extensao = os.path.splitext(arquivo_video)[1]
             numero_temporada = _detectar_numero_temporada(registro["titulo"])
             nome_novo = f"{_sanitizar_nome_arquivo(registro['titulo'])} - S{numero_temporada:02d}E{int(numero_episodio_str):02d}{extensao}"
@@ -1129,7 +1372,52 @@ def verificar_downloads_em_andamento():
 
     if mudou:
         _salvar_animes(animes)
+    if travados:
+        _tratar_downloads_travados(cliente, travados)
     return concluidos
+
+
+def _arquivo_pertence_ao_torrent(cliente, hash_torrent, caminho_arquivo):
+    """True se o nome do arquivo está na lista de arquivos do PRÓPRIO torrent
+    (qBittorrent `torrents_files`). False em qualquer erro - quem chama
+    mantém a trava de divergência nesse caso."""
+    try:
+        arquivos = cliente.torrents_files(torrent_hash=hash_torrent)
+    except Exception:
+        return False
+    nomes = {os.path.basename(f.name.replace("\\", "/")) for f in arquivos}
+    return os.path.basename(caminho_arquivo) in nomes
+
+
+def _tratar_downloads_travados(cliente, travados):
+    """Tira do qBittorrent cada download sem progresso há
+    `anime_download_travado_horas` e tenta o próximo magnet da página
+    (baixar_episodio exclui os hashes em `episodios_magnets_tentados`). Sem
+    alternativa, a falha fica em `episodios_falha_download` e vira alerta
+    depois de `anime_alerta_falha_horas`. `delete_files=False`, mesmo padrão
+    do resto do arquivo: nunca apaga arquivo no disco. Roda DEPOIS de
+    verificar_downloads_em_andamento salvar o próprio estado, porque
+    baixar_episodio carrega/salva o JSON por conta própria."""
+    for chave, numero_episodio_str, hash_torrent, progresso in travados:
+        animes = _carregar_animes()
+        registro = animes.get(chave)
+        if not registro or numero_episodio_str not in registro.get("downloads_em_andamento", {}):
+            continue
+        porcentagem = f"{progresso * 100:.0f}%" if progresso is not None else "fora do qBittorrent"
+        print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: download travado ({porcentagem}) - tentando outro magnet.")
+        try:
+            cliente.torrents_delete(delete_files=False, torrent_hashes=hash_torrent)
+        except Exception as e:
+            print(f" [SISTEMA] Erro ao remover torrent travado {hash_torrent}: {e}")
+        registro["downloads_em_andamento"].pop(numero_episodio_str, None)
+        tentados = registro.setdefault("episodios_magnets_tentados", {}).setdefault(numero_episodio_str, [])
+        if hash_torrent not in tentados:
+            tentados.append(hash_torrent)
+        registro.setdefault("episodios_download_travado_em", {})[numero_episodio_str] = (
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M')}: {hash_torrent} parado em {porcentagem}"
+        )
+        _salvar_animes(animes)
+        baixar_episodio(chave, registro, int(numero_episodio_str))
 
 
 # ======================================================
@@ -1679,13 +1967,12 @@ def _extrair_hashes_por_episodio(url_anime):
     fansub nem o risco de numeração acumulada, ver docs/CORRECOES.md
     2026-08-08). Dict vazio em qualquer falha - nunca lança exceção."""
     try:
-        resp = requests.get(url_anime, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
-        resp.raise_for_status()
+        html = _obter_html_darkmahou(url_anime)
     except Exception as e:
         print(f" [SISTEMA] Erro ao acessar página do anime ({url_anime}): {e}")
         return {}
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     resultado = {}
     for bloco in soup.find_all("div", class_="soraddl"):
         titulo_bloco = bloco.find("h3")
@@ -2329,7 +2616,7 @@ def formatar_texto_lembretes_atraso(avisos):
     return "🔔 Lembretes:\n" + "\n".join(linhas)
 
 
-def executar_checagem_completa():
+def executar_checagem_completa(origem="gaia"):
     """Roda o fluxo INTEIRO de uma vez - scraping de lançamentos, download dos
     pendentes, casamento com MAL/AniList, calendário de lançamentos e
     lembretes de atraso. Extraído do corpo do loop diário
@@ -2352,11 +2639,56 @@ def executar_checagem_completa():
     notificado quando começa a baixar algum episodio") - lista título+episódio
     de cada download disparado NESSA checagem (diferente de
     `texto_baixando_agora`, que lista quem já estava baixando de uma checagem
-    anterior)."""
-    pendentes = verificar_novos_lancamentos()
-    texto_pendentes = formatar_texto_pendentes(pendentes) if obter_anime_notificar_pendentes_ativo() else None
-    disparados, itens_baixados = processar_downloads_pendentes()
+    anterior).
+
+    🔥 Toda chamada grava uma entrada no histórico de checagens
+    (obter_historico_checagens, 2026-09-24) com início/fim, quantos itens a
+    home trouxe, quantas páginas de anime foram consultadas, episódios novos
+    detectados (e de onde), downloads disparados e os que falharam - mesmo se
+    a checagem quebrar no meio (campo `erro`).
+
+    🔥 `origem` (2026-09-24): "gaia" (padrão - chamada pela GAIA via HTTP) ou
+    "autonoma" (o próprio MOIRAI rodou com a GAIA fechada, ver
+    main._loop_manutencao). O resultado de uma checagem autônoma não tem
+    ninguém pra entregar, então os textos acionáveis (downloads iniciados e
+    alertas) ficam guardados e são incluídos na PRÓXIMA checagem da GAIA.
+    `texto_alertas` junta alerta de site (home vazia, todos os downloads sem
+    magnet) e de episódio falhando há mais de `anime_alerta_falha_horas`.
+    Um lock impede 2 checagens simultâneas (GAIA + autônoma) de dispararem o
+    mesmo download duas vezes."""
+    with _lock_checagem:
+        return _executar_checagem_completa(origem)
+
+
+_lock_checagem = threading.Lock()
+ARQUIVO_RESULTADOS_NAO_ENTREGUES = caminho_dados("anime_tracker_resultados_nao_entregues.json")
+
+
+def _executar_checagem_completa(origem):
+    inicio = datetime.now()
+    relatorio = {}
+    itens_baixados, falhas_download, erro = [], [], None
+    try:
+        pendentes = verificar_novos_lancamentos(relatorio)
+        texto_pendentes = formatar_texto_pendentes(pendentes) if obter_anime_notificar_pendentes_ativo() else None
+        disparados, itens_baixados, falhas_download = processar_downloads_pendentes()
+    except Exception as e:
+        erro = str(e)
+        raise
+    finally:
+        _registrar_checagem({
+            "inicio": inicio.strftime("%Y-%m-%d %H:%M:%S"),
+            "fim": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "origem": origem,
+            **relatorio,
+            "downloads_disparados": [{"titulo": t, "episodio": n} for t, n in itens_baixados],
+            "downloads_com_falha": _detalhar_falhas(falhas_download),
+            "erro": erro,
+        })
     texto_download_iniciado = formatar_texto_download_iniciado(itens_baixados)
+    texto_alertas = formatar_texto_alertas(
+        _alertas_de_site(relatorio, itens_baixados, falhas_download) + _coletar_alertas_falha_persistente()
+    )
     backfill_temporadas_estreia()
     casar_animes_com_mal()
     casar_animes_com_anilist()
@@ -2365,11 +2697,128 @@ def executar_checagem_completa():
     avisos_atraso = obter_lembretes_atraso() if obter_anime_lembrete_atraso_ativo() else []
     texto_lembretes = formatar_texto_lembretes_atraso(avisos_atraso)
     texto_baixando_agora = formatar_texto_baixando_agora(obter_animes_com_download_ativo())
-    return {
+    resultado = {
         "texto_pendentes": texto_pendentes,
         "disparados": disparados,
         "texto_download_iniciado": texto_download_iniciado,
+        "texto_alertas": texto_alertas,
         "texto_calendario": texto_calendario,
         "texto_lembretes": texto_lembretes,
         "texto_baixando_agora": texto_baixando_agora,
     }
+    if origem == "autonoma":
+        _guardar_resultado_nao_entregue(inicio, resultado)
+    else:
+        _incluir_resultados_nao_entregues(resultado)
+    return resultado
+
+
+def _detalhar_falhas(falhas_download):
+    """[(titulo, numero)] -> [{"titulo", "episodio", "motivo"}] - motivo lido
+    de `episodios_falha_download` (gravado por _registrar_falha_download)."""
+    por_titulo = {r["titulo"]: r for r in _carregar_animes().values()}
+    detalhes = []
+    for titulo, numero in falhas_download:
+        falha = por_titulo.get(titulo, {}).get("episodios_falha_download", {}).get(str(numero), {})
+        detalhes.append({"titulo": titulo, "episodio": numero, "motivo": falha.get("motivo")})
+    return detalhes
+
+
+def _alertas_de_site(relatorio, itens_baixados, falhas_download):
+    """Sinais de que o DarkMahou mudou (2026-09-24: a mudança de charset de
+    23/09 passou 1 dia inteiro sem ninguém notar). Home vazia, ou 2+
+    downloads tentados na checagem e nenhum deu certo."""
+    alertas = []
+    if relatorio.get("itens_home", 0) == 0:
+        alertas.append("A home do DarkMahou veio vazia - o site pode estar fora do ar ou ter mudado de layout.")
+    if len(falhas_download) >= 2 and not itens_baixados:
+        alertas.append(
+            f"Nenhum dos {len(falhas_download)} downloads tentados deu certo - "
+            "confira se a página dos animes mudou de estrutura."
+        )
+    return alertas
+
+
+def _coletar_alertas_falha_persistente():
+    """Episódios em `episodios_falha_download` há mais de
+    `anime_alerta_falha_horas` que ainda não foram alertados - avisa 1x só
+    por episódio (marca `alertado`). Continua sendo retentado normalmente."""
+    limite = timedelta(hours=obter_anime_alerta_falha_horas())
+    agora = datetime.now()
+    animes = _carregar_animes()
+    alertas = []
+    mudou = False
+    for registro in animes.values():
+        if registro.get("interesse") != "tenho_interesse":
+            continue
+        for numero, falha in sorted(registro.get("episodios_falha_download", {}).items(), key=lambda par: int(par[0])):
+            if falha.get("alertado"):
+                continue
+            try:
+                desde = datetime.strptime(falha["desde"], "%Y-%m-%d %H:%M")
+            except (KeyError, ValueError):
+                continue
+            if agora - desde >= limite:
+                horas = int((agora - desde).total_seconds() // 3600)
+                alertas.append(f"{registro['titulo']} Episódio {numero} falha há {horas}h ({falha.get('motivo') or 'motivo desconhecido'}).")
+                falha["alertado"] = True
+                mudou = True
+    if mudou:
+        _salvar_animes(animes)
+    return alertas
+
+
+def formatar_texto_alertas(alertas):
+    if not alertas:
+        return None
+    return "⚠️ Alertas do Assistente de Animes:\n" + "\n".join(f"- {a}" for a in alertas)
+
+
+def _carregar_resultados_nao_entregues():
+    try:
+        with open(ARQUIVO_RESULTADOS_NAO_ENTREGUES, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _salvar_resultados_nao_entregues(lista):
+    os.makedirs(os.path.dirname(ARQUIVO_RESULTADOS_NAO_ENTREGUES), exist_ok=True)
+    with open(ARQUIVO_RESULTADOS_NAO_ENTREGUES, "w", encoding="utf-8") as f:
+        json.dump(lista, f, indent=4, ensure_ascii=False)
+
+
+def _guardar_resultado_nao_entregue(inicio, resultado):
+    textos = {k: resultado[k] for k in ("texto_download_iniciado", "texto_alertas") if resultado.get(k)}
+    if not textos:
+        return
+    lista = _carregar_resultados_nao_entregues()
+    lista.append({"quando": inicio.strftime("%d/%m %H:%M"), **textos})
+    _salvar_resultados_nao_entregues(lista)
+
+
+def _incluir_resultados_nao_entregues(resultado):
+    """Prefixa os textos guardados pelas checagens autônomas nos campos
+    correspondentes do resultado desta checagem e limpa o arquivo."""
+    lista = _carregar_resultados_nao_entregues()
+    if not lista:
+        return
+    for campo in ("texto_download_iniciado", "texto_alertas"):
+        blocos = [f"(checagem de {item['quando']}, com a GAIA fechada)\n{item[campo]}" for item in lista if item.get(campo)]
+        if resultado.get(campo):
+            blocos.append(resultado[campo])
+        resultado[campo] = "\n\n".join(blocos) if blocos else None
+    _salvar_resultados_nao_entregues([])
+
+
+def horas_desde_ultima_checagem():
+    """Horas desde o INÍCIO da checagem mais recente no histórico (qualquer
+    origem) - None se nunca houve checagem registrada."""
+    historico = _carregar_historico_checagens()
+    if not historico:
+        return None
+    try:
+        ultima = datetime.strptime(historico[-1]["inicio"], "%Y-%m-%d %H:%M:%S")
+    except (KeyError, ValueError):
+        return None
+    return (datetime.now() - ultima).total_seconds() / 3600

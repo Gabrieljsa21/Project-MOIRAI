@@ -156,3 +156,44 @@ def obter_anime_tracker_ativo():
 
 def salvar_anime_tracker_ativo(estado):
     _definir_par("anime_tracker_ativo", estado)
+
+
+# 🔥 2026-09-24 (pedido do usuário, melhorias pós-viagem): limiares de
+# download travado, alerta de falha persistente e checagem autônoma - todos
+# editáveis no Painel da GAIA (aba ⚙️ Configurações do Assistente de Animes).
+def obter_anime_download_travado_horas():
+    """Horas sem nenhum progresso no qBittorrent até o download ser dado como
+    travado e trocado pelo próximo magnet (ver anime_tracker._tratar_download_travado)."""
+    return _carregar().get("anime_download_travado_horas", 24)
+
+
+def salvar_anime_download_travado_horas(horas):
+    _definir_par("anime_download_travado_horas", horas)
+
+
+def obter_anime_alerta_falha_horas():
+    """Horas que um episódio pode ficar falhando (sem magnet, travado sem
+    alternativa) antes de virar alerta na notificação da checagem."""
+    return _carregar().get("anime_alerta_falha_horas", 48)
+
+
+def salvar_anime_alerta_falha_horas(horas):
+    _definir_par("anime_alerta_falha_horas", horas)
+
+
+def obter_anime_checagem_autonoma_ativa():
+    """O MOIRAI roda a checagem de lançamentos sozinho quando a GAIA está
+    fechada (ver main._loop_manutencao)."""
+    return _carregar().get("anime_checagem_autonoma_ativa", True)
+
+
+def salvar_anime_checagem_autonoma_ativa(estado):
+    _definir_par("anime_checagem_autonoma_ativa", estado)
+
+
+def obter_anime_checagem_autonoma_intervalo_horas():
+    return _carregar().get("anime_checagem_autonoma_intervalo_horas", 6)
+
+
+def salvar_anime_checagem_autonoma_intervalo_horas(horas):
+    _definir_par("anime_checagem_autonoma_intervalo_horas", horas)

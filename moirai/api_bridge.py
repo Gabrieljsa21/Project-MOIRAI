@@ -9,7 +9,9 @@ na GAIA (`BaseHTTPRequestHandler` simples, sem framework). 3 consumidores:
   + `POST /anime/baixar_pendentes`, `POST /anime/assistir/<titulo>`.
 - **GAIA, Agendador Diário (poll 1x/dia)** - `GET /checagem_diaria`,
   `GET`/`POST /ultima_checagem_diaria`. A GAIA decide QUANDO chamar e O QUE
-  DIZER no Discord - aqui só devolve o dado bruto.
+  DIZER no Discord - aqui só devolve o dado bruto. `GET /historico_checagens
+  [?limite=N]` devolve o registro de todas as checagens (mais recente
+  primeiro, ver `anime_tracker.obter_historico_checagens`).
 - **GAIA, `ui/qt_modais/animes.py` (Fase 2, 2026-08-24) + comandos explícitos
   + ferramentas de recomendação** - o resto dos endpoints abaixo, um por
   função que a UI/os comandos precisam (marcar interesse, remover, editar
@@ -114,6 +116,9 @@ class _API(BaseHTTPRequestHandler):
             self._responder_json(anime_tracker.executar_checagem_completa())
         elif caminho == "/ultima_checagem_diaria":
             self._responder_json({"data": anime_tracker.obter_ultima_checagem_diaria()})
+        elif caminho == "/historico_checagens":
+            limite = (params.get("limite") or [""])[0]
+            self._responder_json(anime_tracker.obter_historico_checagens(int(limite) if limite.isdigit() else None))
         elif caminho == "/mal/configurado":
             self._responder_json({"configurado": mal_client.esta_configurado()})
         elif caminho == "/mal/completos_com_notas":
