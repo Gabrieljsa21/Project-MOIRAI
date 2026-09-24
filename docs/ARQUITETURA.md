@@ -299,6 +299,23 @@ depois da revisão de pendências:
 - **Logs.** `runtime_log.remover_logs_antigos` apaga logs diários com mais
   de 30 dias (só arquivos no padrão `AAAA-MM-DD.log`).
 
+## Loop de downloads separado da manutenção (2026-09-24)
+
+Pedido do usuário: os episódios terminam de baixar em poucos minutos e a
+renomeação esperava até 5min pela próxima volta de `_loop_manutencao`.
+`verificar_downloads_em_andamento` agora roda em `_loop_downloads`, thread
+própria, a cada `anime_intervalo_downloads_segundos` (30s; `max(5, ...)`
+contra valor absurdo). Polling em vez de evento: o qBittorrent tem "rodar
+programa ao concluir", mas isso exigiria configurar o cliente à mão; 30s de
+atraso máximo resolve o pedido sem dependência externa.
+
+Com 2 threads + a checagem mexendo no mesmo JSON, entrou
+`lock_estado_animes` (RLock, antes era um Lock só da checagem). As rotas
+POST da ponte HTTP ficaram FORA de propósito: a checagem segura o lock por
+~50s e o cliente da GAIA desiste em 30s, então marcar interesse durante uma
+checagem viraria erro; a janela de colisão delas com o loop é de
+milissegundos (cada função recarrega o JSON logo antes de salvar).
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/

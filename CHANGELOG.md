@@ -22,6 +22,7 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ### Alterado
 
+- **Renomeação de episódio concluído em até 30s, não mais até 5min (2026-09-24, pedido do usuário)**: `verificar_downloads_em_andamento` saiu do loop de manutenção de 5min e ganhou loop próprio (`main._loop_downloads`), a cada `anime_intervalo_downloads_segundos` (30s, mínimo 5s, editável no Painel da GAIA). Sem download em andamento, cada volta só lê o JSON local. Os dois loops e a checagem completa compartilham `anime_tracker.lock_estado_animes` (RLock) para uma escrita no JSON não sobrescrever a outra.
 - **Categoria do Menu Radial (IRIS) renomeada de "Anime Tracker" pra "Watchlist" (2026-08-30, pedido do usuário)** - mudança em código só do lado do IRIS; aqui só os comentários de `moirai/api_bridge.py` que citavam o nome foram atualizados. Ver "Categoria do IRIS renomeada..." em `docs/ARQUITETURA.md`.
 
 ### Corrigido

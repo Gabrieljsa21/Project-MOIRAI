@@ -197,3 +197,16 @@ def obter_anime_checagem_autonoma_intervalo_horas():
 
 def salvar_anime_checagem_autonoma_intervalo_horas(horas):
     _definir_par("anime_checagem_autonoma_intervalo_horas", horas)
+
+
+def obter_anime_intervalo_downloads_segundos():
+    """De quanto em quanto tempo o MOIRAI confere os downloads em andamento no
+    qBittorrent e renomeia os que terminaram (2026-09-24, pedido do usuário:
+    "os episódios baixam bem rápido, não tem por que esperar 5min ou mais pra
+    renomear") - loop próprio em main._loop_downloads, separado da manutenção
+    de 5min. Sem download em andamento, cada volta só lê o JSON local."""
+    return _carregar().get("anime_intervalo_downloads_segundos", 30)
+
+
+def salvar_anime_intervalo_downloads_segundos(segundos):
+    _definir_par("anime_intervalo_downloads_segundos", segundos)

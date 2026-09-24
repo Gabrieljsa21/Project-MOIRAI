@@ -121,17 +121,35 @@ def _checagem_autonoma_se_preciso():
     anime_tracker.executar_checagem_completa(origem="autonoma")
 
 
-def _loop_manutencao():
-    """Mesmo trabalho de `_monitorar_downloads_animes_loop` (GAIA, antes da
-    extração) - downloads em andamento, sincronia de biblioteca local,
-    progresso do MyAnimeList, a cada 5min. + checagem autônoma de lançamentos
-    quando a GAIA está fechada (2026-09-24)."""
+def _loop_downloads():
+    """Downloads em andamento (concluído -> renomeia e marca "baixado";
+    travado -> troca de magnet) a cada `anime_intervalo_downloads_segundos`
+    (30s por padrão). Separado de _loop_manutencao em 2026-09-24, pedido do
+    usuário: os episódios baixam em poucos minutos e a renomeação esperava
+    até 5min pela próxima volta da manutenção. Sem download em andamento,
+    verificar_downloads_em_andamento sai logo depois de ler o JSON local, sem
+    falar com o qBittorrent."""
     while True:
         try:
             if config.obter_anime_tracker_ativo():
-                anime_tracker.verificar_downloads_em_andamento()
-                anime_tracker.sincronizar_biblioteca_local()
-                anime_tracker.sincronizar_progresso_mal()
+                with anime_tracker.lock_estado_animes:
+                    anime_tracker.verificar_downloads_em_andamento()
+        except Exception as e:
+            print(f" [SISTEMA] MOIRAI: erro no loop de downloads: {e}")
+        time.sleep(max(5, config.obter_anime_intervalo_downloads_segundos()))
+
+
+def _loop_manutencao():
+    """Mesmo trabalho de `_monitorar_downloads_animes_loop` (GAIA, antes da
+    extração) - sincronia de biblioteca local e progresso do MyAnimeList, a
+    cada 5min. + checagem autônoma de lançamentos quando a GAIA está fechada
+    (2026-09-24). Downloads em andamento saíram daqui pro _loop_downloads."""
+    while True:
+        try:
+            if config.obter_anime_tracker_ativo():
+                with anime_tracker.lock_estado_animes:
+                    anime_tracker.sincronizar_biblioteca_local()
+                    anime_tracker.sincronizar_progresso_mal()
                 _checagem_autonoma_se_preciso()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de manutenção: {e}")
@@ -145,10 +163,13 @@ def main():
 
     anime_tracker.definir_callback_episodio_movido_assistidos(_avisar_episodio_assistido_webhook)
 
-    thread_loop = threading.Thread(target=_loop_manutencao, daemon=True)
-    thread_loop.start()
+    threading.Thread(target=_loop_downloads, daemon=True).start()
+    threading.Thread(target=_loop_manutencao, daemon=True).start()
 
-    print(" [SISTEMA] MOIRAI pronto - loop de manutenção a cada 5min, ponte HTTP na porta 8768.")
+    print(
+        f" [SISTEMA] MOIRAI pronto - downloads a cada {config.obter_anime_intervalo_downloads_segundos()}s, "
+        "manutenção a cada 5min, ponte HTTP na porta 8768."
+    )
     iniciar_servidor_api()  # bloqueia a thread principal
 
 

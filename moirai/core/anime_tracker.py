@@ -17,7 +17,7 @@ ver _verificar_e_executar_lancamentos_steam_diario/_monitorar_precos_loop):
 2. `processar_downloads_pendentes()` - pros marcados "tenho_interesse", se o último
    episódio visto ainda não foi baixado nem está baixando, extrai o magnet da página do
    anime e manda pro qBittorrent (`save_path` = obter_anime_pasta_downloads()).
-3. `verificar_downloads_em_andamento()` - roda mais frequente (loop próprio, minutos)
+3. `verificar_downloads_em_andamento()` - roda mais frequente (loop próprio, 30s por padrão desde 2026-09-24)
    - consulta o qBittorrent pelos hashes em andamento; quando um termina, renomeia o
    arquivo baixado pro padrão "{Título} - E{NN}{extensão}" e marca o episódio como
    "baixado".
@@ -2656,11 +2656,16 @@ def executar_checagem_completa(origem="gaia"):
     magnet) e de episódio falhando há mais de `anime_alerta_falha_horas`.
     Um lock impede 2 checagens simultâneas (GAIA + autônoma) de dispararem o
     mesmo download duas vezes."""
-    with _lock_checagem:
+    with lock_estado_animes:
         return _executar_checagem_completa(origem)
 
 
-_lock_checagem = threading.Lock()
+# 🔥 Lock do estado dos animes (2026-09-24) - a checagem completa e os 2 loops
+# de main.py (downloads a cada ~30s, manutenção a cada 5min) rodam em threads
+# diferentes e todos fazem carregar -> alterar -> salvar no mesmo JSON; sem
+# isso, uma escrita podia apagar a outra. RLock porque a checagem chama
+# funções que também podem ser chamadas soltas.
+lock_estado_animes = threading.RLock()
 ARQUIVO_RESULTADOS_NAO_ENTREGUES = caminho_dados("anime_tracker_resultados_nao_entregues.json")
 
 
