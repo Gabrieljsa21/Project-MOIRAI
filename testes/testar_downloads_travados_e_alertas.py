@@ -176,6 +176,26 @@ def testar_desempate_prefere_numeracao_do_episodio_sem_trocar_qualidade():
     assert at._escolher_melhor_magnet([("1080p HEVC", judas), ("1080p", erai)], 23) == judas
 
 
+def testar_loop_de_downloads_usa_intervalo_configurado():
+    from moirai import main
+
+    class _Parar(Exception):
+        pass
+
+    chamadas, esperas = [], []
+    at.verificar_downloads_em_andamento = lambda: chamadas.append(at.lock_estado_animes._is_owned())
+    main.config.obter_anime_tracker_ativo = lambda: True
+    main.time.sleep = lambda s: (esperas.append(s), (_ for _ in ()).throw(_Parar()))
+    for configurado, esperado in ((30, 30), (1, 5)):
+        main.config.obter_anime_intervalo_downloads_segundos = lambda c=configurado: c
+        try:
+            main._loop_downloads()
+        except _Parar:
+            pass
+        assert esperas[-1] == esperado, esperas
+    assert chamadas == [True, True]  # sempre dentro do lock de estado
+
+
 def testar_checagem_autonoma_so_roda_com_gaia_fechada_e_intervalo_vencido():
     from moirai import main
     chamadas = []
@@ -202,6 +222,7 @@ if __name__ == "__main__":
     testar_alertas_de_site()
     testar_resultado_da_checagem_autonoma_e_entregue_na_proxima()
     testar_rotacao_de_logs()
+    testar_loop_de_downloads_usa_intervalo_configurado()
     testar_desempate_prefere_numeracao_do_episodio_sem_trocar_qualidade()
     testar_checagem_autonoma_so_roda_com_gaia_fechada_e_intervalo_vencido()
     print("OK")

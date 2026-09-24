@@ -48,7 +48,7 @@ Copy-Item .env.example .env
 python -m moirai.main
 ```
 
-O serviço acompanha downloads e a biblioteca a cada cinco minutos. A consulta de novos lançamentos ocorre quando um cliente chama `GET /checagem_diaria`; com a GAIA fechada, o próprio serviço consulta a cada 6 horas (configurável) e guarda o resumo para a próxima consulta da GAIA. Cada consulta fica registrada em `data/anime_tracker_historico_checagens.json` e pode ser lida em `GET /historico_checagens`. A API local usa a porta `8768`.
+O serviço confere os downloads em andamento a cada 30 segundos (renomeando os concluídos) e sincroniza a biblioteca a cada cinco minutos. A consulta de novos lançamentos ocorre quando um cliente chama `GET /checagem_diaria`; com a GAIA fechada, o próprio serviço consulta a cada 6 horas (configurável) e guarda o resumo para a próxima consulta da GAIA. Cada consulta fica registrada em `data/anime_tracker_historico_checagens.json` e pode ser lida em `GET /historico_checagens`. A API local usa a porta `8768`.
 
 Use `iniciar_moirai_oculto.vbs` para abrir sem terminal visível. O `.env.example` explica as opções do qBittorrent, MyAnimeList e webhook.
 
