@@ -55,7 +55,7 @@ def _preparar(animes):
 def testar_html_sem_charset_vira_utf8_e_magnet_e_encontrado():
     _preparar({})
     opcoes = at._extrair_opcoes_download("https://darkmahou.io/anime/fora-da-home/", 12)
-    assert opcoes == [("1080p HEVC", "magnet:?xt=urn:btih:" + "c" * 40)], opcoes
+    assert opcoes == [("1080p HEVC", "magnet:?xt=urn:btih:" + "c" * 40, None)], opcoes
     itens = at.listar_ultimos_lancamentos()
     assert itens[0]["titulo"] == "Anime 4ª Temporada", itens
 

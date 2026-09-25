@@ -176,6 +176,19 @@ def testar_desempate_prefere_numeracao_do_episodio_sem_trocar_qualidade():
     assert at._escolher_melhor_magnet([("1080p HEVC", judas), ("1080p", erai)], 23) == judas
 
 
+def testar_sem_censura_tem_prioridade_sobre_qualidade():
+    # Caso real (Haite Kudasai, Takamine-san): rótulo inconsistente no site.
+    judas = f"magnet:?xt=urn:btih:{HASH_A}&dn=%5BJudas%5D%20Takamine-san%20-%20S01E06%20%5B1080p%5D%5BHEVC%5D"
+    wf = f"magnet:?xt=urn:btih:{HASH_B}&dn=%5BWF%5D%20Takamine-san%20-%2006%20%5BWEB%201080p%20x265%5D%5BUNCENSORED%5D"
+    anon = "magnet:?xt=urn:btih:" + "c" * 40 + "&dn=%5Banonymous%5D%20Takamine-san%20-%2010%20pt-BR%201920x1080v2"
+    # "1080p Censura" com [UNCENSORED] no nome: vale o dn.
+    assert at._escolher_melhor_magnet([("1080p HEVC", judas), ("1080p Censura", wf)], 6) == wf
+    # Só o rótulo diz "Sem Censura": vale o rótulo.
+    assert at._escolher_melhor_magnet([("1080p HEVC", judas), ("1080p PT-BR Sem Censura", anon)], 10) == anon
+    # Sem opção sem censura, a qualidade continua mandando.
+    assert at._escolher_melhor_magnet([("1080p", anon), ("1080p HEVC", judas)]) == judas
+
+
 def testar_loop_de_downloads_usa_intervalo_configurado():
     from moirai import main
 
@@ -224,5 +237,6 @@ if __name__ == "__main__":
     testar_rotacao_de_logs()
     testar_loop_de_downloads_usa_intervalo_configurado()
     testar_desempate_prefere_numeracao_do_episodio_sem_trocar_qualidade()
+    testar_sem_censura_tem_prioridade_sobre_qualidade()
     testar_checagem_autonoma_so_roda_com_gaia_fechada_e_intervalo_vencido()
     print("OK")

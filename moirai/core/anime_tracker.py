@@ -4,7 +4,7 @@ uma), avisa 1x por dia (ver _verificar_e_executar_animes_diario, run.py) quais a
 episódio novo, deixa o usuário marcar interesse/desinteresse por anime (ver
 obter_animes_rastreados/marcar_interesse, usado pelo Painel - ui/qt_modais/animes.py),
 e baixa automaticamente (via magnet, qBittorrent) os episódios dos animes marcados
-"tenho_interesse", priorizando 1080p HEVC.
+"tenho_interesse", priorizando sem censura e 1080p HEVC.
 
 Fluxo completo, em 4 etapas independentes (cada uma chamada por seu próprio loop em
 run.py, mesmo espírito de separar "detectar" de "agir" já usado no resto do projeto -
@@ -45,6 +45,7 @@ chamador quando a estrutura não bate com o esperado):
   rápidos/de melhor qualidade sai legendado primeiro).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -101,10 +102,21 @@ def _obter_html_darkmahou(url):
     novos também eram gravados corrompidos ("4Âª Temporada"). O HTML do site
     é UTF-8 de verdade, então força a decodificação em vez de confiar no
     cabeçalho."""
+    em_cache = _cache_html.get(url)
+    if em_cache and time.time() - em_cache[0] < _SEGUNDOS_CACHE_HTML:
+        return em_cache[1]
     resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
     resp.raise_for_status()
     resp.encoding = "utf-8"
+    _cache_html[url] = (time.time(), resp.text)
     return resp.text
+
+
+# 🔥 2026-09-24: a mesma página de anime era baixada 1x por episódio (12
+# requests pra um anime de 12 episódios) e agora também pra procurar
+# especiais - 2 minutos cobrem uma checagem sem esconder mudança do site.
+_cache_html = {}
+_SEGUNDOS_CACHE_HTML = 120
 
 
 EXTENSOES_VIDEO = (".mkv", ".mp4", ".avi")
@@ -421,6 +433,35 @@ def obter_temporada_atual():
     return f"{_MES_PARA_ESTACAO[agora.month]} {agora.year}"
 
 
+# Pasta de anime finalizado (2026-09-24, pedido do usuário): "2026 3-Verão",
+# o número na frente mantém as estações em ordem cronológica no Explorer.
+_PADRAO_PASTA_TEMPORADA = re.compile(r"^\d{4} [1-4]-(?:Inverno|Primavera|Verão|Outono)$")
+
+
+def nome_pasta_temporada(data=None):
+    """'2026 3-Verão' para uma data de julho a setembro de 2026 (hoje, por padrão)."""
+    data = data or datetime.now()
+    estacao = _MES_PARA_ESTACAO[data.month]
+    return f"{data.year} {_ORDEM_ESTACAO_NO_ANO[estacao] + 1}-{estacao}"
+
+
+def anime_ja_finalizado(registro):
+    """True para anime que já terminou de passar: estreou 2 temporadas atrás
+    ou antes, ou estreou na temporada anterior e o site já tem o total de
+    episódios do MAL. Anime da temporada atual, ou da anterior ainda sem o
+    último episódio (dois cours seguidos, caso de Re:Zero 4), fica de fora.
+    Sem temporada de estreia conhecida, também fica de fora."""
+    estreia = chave_ordenacao_temporada(registro.get("temporada_estreia"))
+    if estreia == (-1, -1):
+        return False
+    atual = chave_ordenacao_temporada(obter_temporada_atual())
+    distancia = (atual[0] - estreia[0]) * 4 + atual[1] - estreia[1]
+    if distancia >= 2:
+        return True
+    total = registro.get("mal_num_episodios")
+    return distancia == 1 and bool(total) and (registro.get("ultimo_episodio_visto") or 0) >= total
+
+
 _LIMITE_BACKFILL_TEMPORADA_POR_EXECUCAO = 20
 
 
@@ -487,11 +528,28 @@ def listar_ultimos_lancamentos():
     return itens
 
 
+# 🔥 Só "Episódio N" conta como número de episódio (2026-09-24, caso real
+# Kimi no Koto ga Daidaidaidaidaisuki na 100-nin no Kanojo): a página tem um
+# bloco único com o NOME do anime (pacote da temporada) e o primeiro número do
+# título ("100-nin") virava "último episódio = 100". Lote ("Episódios 01~04")
+# e título de anime ficam de fora.
+# Um caractere qualquer no lugar do "s" (caso real Re:Zero 4ª Temporada: o
+# site publicou "Epi8ódio 18" e o E18 nunca era encontrado). "Episódios"
+# (lote) continua de fora porque exige espaço logo depois de "dio".
+_PALAVRA_EPISODIO = r"Epi.?[oó]dio"
+_PADRAO_BLOCO_NUMERADO = re.compile(rf"^{_PALAVRA_EPISODIO}\s+0*(\d+)\b", re.IGNORECASE)
+
+
+def _numero_do_bloco(texto_bloco):
+    m = _PADRAO_BLOCO_NUMERADO.match(texto_bloco or "")
+    return int(m.group(1)) if m else None
+
+
 def _ultimo_episodio_da_pagina(soup):
-    """MAIOR número entre todos os blocos `div.soraddl` da página do anime
-    (não assume que vêm em ordem). None se não achar nenhum."""
+    """MAIOR número entre os blocos "Episódio N" (`div.soraddl`) da página do
+    anime (não assume que vêm em ordem). None se não achar nenhum."""
     numeros = [
-        _numero_episodio_de_texto(bloco.find("h3").get_text(strip=True))
+        _numero_do_bloco(bloco.find("h3").get_text(strip=True))
         for bloco in soup.find_all("div", class_="soraddl") if bloco.find("h3")
     ]
     numeros = [n for n in numeros if n is not None]
@@ -685,6 +743,9 @@ def formatar_texto_pendentes(pendentes):
 # ======================================================
 # 🔎 SCRAPING - MAGNET DE UM EPISÓDIO (página do anime)
 # ======================================================
+_PADRAO_SEM_CENSURA = re.compile(r"sem\s+censura|uncensored", re.IGNORECASE)
+
+
 def _escolher_melhor_magnet(opcoes, numero_episodio=None):
     """`opcoes`: [(rotulo, magnet), ...] da primeira linha (legendado) da tabela de
     download. Prioriza 1080p+HEVC > 1080p (qualquer encoder) > primeira opção
@@ -695,9 +756,29 @@ def _escolher_melhor_magnet(opcoes, numero_episodio=None):
     número do episódio pedido. A Judas numera Yomi 2 atrás do site (bloco
     "Episódio 23" com "S01E21"), o que travava a renomeação; DKB/Erai no mesmo
     bloco usam a numeração do site. A qualidade continua mandando: o
-    desempate nunca troca 1080p HEVC por uma opção pior."""
+    desempate nunca troca 1080p HEVC por uma opção pior.
+
+    🔥 Sem censura acima de tudo (2026-09-24, pedido do usuário: "se puder
+    escolher, prefiro sem censura"): a versão sem censura fica na MESMA linha
+    da tabela que as outras, com rótulo inconsistente (caso real Haite
+    Kudasai, Takamine-san: "1080p Sem Censura", "1080p PT-BR SEM CENSURA" e
+    até "1080p Censura" com `[UNCENSORED]` no nome). Por isso confere rótulo E
+    `dn`. Vem antes da qualidade porque o rótulo quase nunca diz "HEVC" mesmo
+    quando o arquivo é x265 - depois dela, nunca seria escolhida.
+
+    Opções de lote (3º elemento `(inicio, fim)`, ver _extrair_opcoes_download)
+    perdem para episódio avulso no mesmo nível, e lote menor ganha de lote
+    maior - só o arquivo pedido é baixado, mas lote menor é menos torrent
+    pra buscar metadado e semear."""
     if not opcoes:
         return None
+
+    def tamanho_lote(par):
+        lote = par[2] if len(par) > 2 else None
+        return lote[1] - lote[0] + 1 if lote else 1
+
+    def sem_censura(rotulo, magnet):
+        return 1 if _opcao_sem_censura(rotulo, magnet) else 0
 
     def pontuar(rotulo):
         rotulo_min = rotulo.lower()
@@ -710,17 +791,218 @@ def _escolher_melhor_magnet(opcoes, numero_episodio=None):
     def numero_bate(magnet):
         if numero_episodio is None:
             return 0
-        nome = urllib.parse.parse_qs(urllib.parse.urlparse(magnet).query).get("dn", [""])[0]
-        return 1 if _numero_episodio_no_nome_arquivo(nome) == int(numero_episodio) else 0
+        return 1 if _numero_episodio_no_nome_arquivo(_nome_da_opcao(magnet)) == int(numero_episodio) else 0
 
     # max() devolve o PRIMEIRO empate - mantém a ordem da página como último critério.
-    return max(opcoes, key=lambda par: (pontuar(par[0]), numero_bate(par[1])))[1]
+    return max(opcoes, key=lambda par: (
+        sem_censura(par[0], par[1]), pontuar(par[0]), numero_bate(par[1]), -tamanho_lote(par)))[1]
+
+
+def _opcao_sem_censura(rotulo, magnet):
+    return bool(_PADRAO_SEM_CENSURA.search(f"{rotulo} {_nome_da_opcao(magnet)}"))
+
+
+# ======================================================
+# 🔗 LINK .torrent (nyaa.si) ALÉM DE MAGNET
+# ======================================================
+# 🔥 2026-09-24, caso real Kawaii dake ja Nai Shikimori-san: páginas mais
+# antigas do DarkMahou linkam `https://nyaa.si/download/N.torrent` em vez de
+# magnet, e todo episódio terminava em "nenhum magnet na página". O resto do
+# fluxo depende do hash (acompanhamento, magnets tentados), então o .torrent é
+# baixado aqui, uma vez por processo, e o hash sai do SHA-1 do dicionário
+# `info`, como no próprio BitTorrent.
+_PADRAO_LINK_DOWNLOAD = re.compile(r"^magnet:|\.torrent(?:$|\?)", re.IGNORECASE)
+_cache_torrents = {}
+_SEGUNDOS_CACHE_FALHA_TORRENT = 3600
+
+
+def _bdecode(dados, i=0):
+    """Decodifica um valor bencode a partir de `i`; devolve (valor, fim).
+    Em dicionário, guarda o trecho cru de `info` em `_info_bruto`."""
+    c = dados[i:i + 1]
+    if c == b"i":
+        fim = dados.index(b"e", i)
+        return int(dados[i + 1:fim]), fim + 1
+    if c == b"l":
+        i, lista = i + 1, []
+        while dados[i:i + 1] != b"e":
+            valor, i = _bdecode(dados, i)
+            lista.append(valor)
+        return lista, i + 1
+    if c == b"d":
+        i, dicio = i + 1, {}
+        while dados[i:i + 1] != b"e":
+            chave, i = _bdecode(dados, i)
+            inicio_valor = i
+            dicio[chave], i = _bdecode(dados, i)
+            if chave == b"info":
+                dicio["_info_bruto"] = dados[inicio_valor:i]
+        return dicio, i + 1
+    separador = dados.index(b":", i)
+    tamanho = int(dados[i:separador])
+    return dados[separador + 1:separador + 1 + tamanho], separador + 1 + tamanho
+
+
+def _obter_torrent(url):
+    """(bytes, hash, nome) de um link .torrent, ou None em qualquer falha.
+    Falha fica em cache por `_SEGUNDOS_CACHE_FALHA_TORRENT`: o nyaa.si remove
+    torrent (caso real: todo "1080p HEVC" do Shikimori-san dá 404) e a
+    mesma opção é consultada várias vezes por escolha."""
+    em_cache = _cache_torrents.get(url)
+    if em_cache and (em_cache[1] is not None or time.time() - em_cache[0] < _SEGUNDOS_CACHE_FALHA_TORRENT):
+        return em_cache[1]
+    try:
+        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
+        resp.raise_for_status()
+        meta, _ = _bdecode(resp.content)
+        nome = meta[b"info"].get(b"name", b"").decode("utf-8", errors="replace")
+        resultado = (resp.content, hashlib.sha1(meta["_info_bruto"]).hexdigest(), nome)
+    except Exception as e:
+        print(f" [SISTEMA] .torrent indisponível ({url}): {e}")
+        resultado = None
+    _cache_torrents[url] = (time.time(), resultado)
+    return resultado
+
+
+def _nome_da_opcao(link):
+    """Nome do conteúdo declarado no link: `dn` do magnet ou `name` do .torrent."""
+    if link.startswith("magnet:"):
+        return urllib.parse.parse_qs(urllib.parse.urlparse(link).query).get("dn", [""])[0]
+    torrent = _obter_torrent(link)
+    return torrent[2] if torrent else ""
+
+
+def _hash_da_opcao(link):
+    if link.startswith("magnet:"):
+        return _hash_do_magnet(link)
+    torrent = _obter_torrent(link)
+    return torrent[1] if torrent else None
+
+
+# ======================================================
+# ✨ EPISÓDIO ESPECIAL (bloco "Episódio Especial", sem número)
+# ======================================================
+# 🔥 2026-09-24, pedido do usuário (caso real Kawaii dake ja Nai
+# Shikimori-san, especial entre os episódios 6 e 7): o especial é
+# identificado como "especial-K" (K = ordem do especial na página) em
+# `downloads_em_andamento` e nos dicts de auditoria, e o estado fica em
+# `registro["especiais"][K]` = {"apos": N, "status": ...} - FORA de
+# `episodios`, cujas chaves a GAIA/IRIS convertem com int(). O nome final
+# usa a posição: "Título - S01E06.5 - Especial 1.mkv".
+_PREFIXO_ESPECIAL = "especial-"
+_PADRAO_BLOCO_ESPECIAL = re.compile(rf"^{_PALAVRA_EPISODIO}\s+Especial\b", re.IGNORECASE)
+_PADRAO_NOME_ESPECIAL = re.compile(r" - (?:S\d+)?E\d+\.5 - Especial \d+")
+
+
+def _eh_especial(ident):
+    return str(ident).startswith(_PREFIXO_ESPECIAL)
+
+
+def _ordem_especial(ident):
+    return int(str(ident)[len(_PREFIXO_ESPECIAL):])
+
+
+def _dados_especial(registro, ident):
+    return registro.get("especiais", {}).get(str(_ordem_especial(ident)), {})
+
+
+def _rotulo_episodio(registro, ident):
+    """Como o episódio aparece em log/notificação: "6.5 - Especial 1" ou o número."""
+    if not _eh_especial(ident):
+        return str(ident)
+    return f"{_dados_especial(registro, ident).get('apos', 0)}.5 - Especial {_ordem_especial(ident)}"
+
+
+def _status_episodio(registro, ident):
+    if _eh_especial(ident):
+        return _dados_especial(registro, ident).get("status")
+    return registro.get("episodios", {}).get(str(ident))
+
+
+def _definir_status_episodio(registro, ident, status):
+    if _eh_especial(ident):
+        registro.setdefault("especiais", {}).setdefault(str(_ordem_especial(ident)), {})["status"] = status
+    else:
+        registro.setdefault("episodios", {})[str(ident)] = status
+
+
+def _blocos_especiais(soup):
+    """[(K, apos, bloco)] na ordem da página; `apos` = maior episódio numerado
+    visto antes do bloco (a página nem sempre está em ordem)."""
+    especiais, maior_antes = [], 0
+    for bloco in soup.find_all("div", class_="soraddl"):
+        titulo = bloco.find("h3")
+        texto = titulo.get_text(strip=True) if titulo else ""
+        if _PADRAO_BLOCO_ESPECIAL.match(texto):
+            especiais.append((len(especiais) + 1, maior_antes, bloco))
+            continue
+        numero = _numero_do_bloco(texto)
+        if numero is not None:
+            maior_antes = max(maior_antes, numero)
+    return especiais
+
+
+def _especiais_a_baixar(chave, registro):
+    """Registra os especiais da página (anime em andamento, ou 1ª vez para
+    anime já completo) e devolve os "especial-K" ainda não tratados. Falha
+    de rede não impede o resto da checagem."""
+    if esta_completo(registro) and "especiais_verificado_em" in registro:
+        conhecidos = registro.get("especiais", {})
+    else:
+        try:
+            soup = BeautifulSoup(_obter_html_darkmahou(registro["url"]), "html.parser")
+        except Exception as e:
+            print(f" [SISTEMA] Erro ao procurar especiais de {registro['titulo']}: {e}")
+            return []
+        with lock_estado_animes:
+            animes = _carregar_animes()
+            if chave not in animes:
+                return []
+            salvo = animes[chave]
+            conhecidos = salvo.setdefault("especiais", {})
+            for ordem, apos, _ in _blocos_especiais(soup):
+                conhecidos.setdefault(str(ordem), {"apos": apos})
+            salvo["especiais_verificado_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            _salvar_animes(animes)
+        registro["especiais"] = conhecidos
+        registro["especiais_verificado_em"] = salvo["especiais_verificado_em"]
+    tratados = set()
+    for campo in _CAMPOS_EPISODIO_TRATADO:
+        tratados.update(str(k) for k in registro.get(campo, {}))
+    pendentes = []
+    for ordem, dados in sorted(conhecidos.items(), key=lambda par: int(par[0])):
+        ident = f"{_PREFIXO_ESPECIAL}{ordem}"
+        if not dados.get("status") and ident not in tratados:
+            pendentes.append(ident)
+    return pendentes
+
+
+_PADRAO_INTERVALO_LOTE = re.compile(r"(\d{1,4})\s*[~-]\s*(\d{1,4})")
+
+
+def _intervalo_do_lote(titulo_bloco):
+    """(inicio, fim) de um bloco de lote ("Episódios 01~04 Sem Censura",
+    "1ª Temporada Completa Legendado Torrent [01-12]"), ou None."""
+    m = _PADRAO_INTERVALO_LOTE.search(titulo_bloco)
+    if not m:
+        return None
+    inicio, fim = int(m.group(1)), int(m.group(2))
+    return (inicio, fim) if inicio < fim else None
 
 
 def _extrair_opcoes_download(url_anime, numero_episodio):
-    """Baixa a página do anime e devolve [(rotulo, magnet), ...] da PRIMEIRA linha
-    (legendado) do bloco do episódio pedido. Lista vazia se a página/episódio não
-    for encontrado - nunca lança exceção."""
+    """Baixa a página do anime e devolve [(rotulo, magnet, lote), ...] da
+    PRIMEIRA linha (legendado) do bloco do episódio pedido. Lista vazia se a
+    página/episódio não for encontrado - nunca lança exceção.
+
+    🔥 Lotes sem censura (2026-09-24, pedido do usuário, caso real Haite
+    Kudasai, Takamine-san: "Episódios 01~04 Sem Censura" num link só da
+    WorldFansub): blocos com intervalo que cobre o episódio entram como
+    opção com `lote = (inicio, fim)` - SÓ quando são sem censura, o único
+    motivo pra preferir um lote a um avulso. O título do bloco vai no
+    rótulo (a marcação "Sem Censura" às vezes só existe ali). Avulsos têm
+    `lote = None`. _aplicar_selecao_lotes baixa só o arquivo do episódio
+    dentro do lote."""
     try:
         html = _obter_html_darkmahou(url_anime)
     except Exception as e:
@@ -728,23 +1010,41 @@ def _extrair_opcoes_download(url_anime, numero_episodio):
         return []
 
     soup = BeautifulSoup(html, "html.parser")
+    if _eh_especial(numero_episodio):
+        for ordem, _, bloco in _blocos_especiais(soup):
+            if ordem == _ordem_especial(numero_episodio):
+                linha = bloco.find("tr")
+                links = linha.find_all("a", href=_PADRAO_LINK_DOWNLOAD) if linha else []
+                return [(a.get_text(strip=True), a["href"], None) for a in links]
+        return []
     # 🔥 Prefixo, não igualdade exata (2026-08-05, bug real encontrado - o
     # último episódio de uma temporada às vezes vem com um sufixo, ex.:
     # "Episódio 13 Final" - igualdade exata contra "Episódio 13" nunca batia,
     # o download do episódio final simplesmente nunca era encontrado). `\b`
     # depois do número evita falso positivo de "Episódio 13" casar com
     # "Episódio 130" (ou similar).
-    padrao_alvo = re.compile(rf"^Epis[oó]dio\s+0*{numero_episodio}\b", re.IGNORECASE)
+    padrao_alvo = re.compile(rf"^{_PALAVRA_EPISODIO}\s+0*{numero_episodio}\b", re.IGNORECASE)
+    avulsas, lotes, achou_avulso = [], [], False
     for bloco in soup.find_all("div", class_="soraddl"):
         titulo_bloco = bloco.find("h3")
-        if not titulo_bloco or not padrao_alvo.match(titulo_bloco.get_text(strip=True)):
+        if not titulo_bloco:
             continue
+        texto_bloco = titulo_bloco.get_text(strip=True)
         primeira_linha = bloco.find("tr")
-        if not primeira_linha:
-            return []
-        links_magnet = primeira_linha.find_all("a", href=re.compile(r"^magnet:"))
-        return [(a.get_text(strip=True), a["href"]) for a in links_magnet]
-    return []
+        links_magnet = primeira_linha.find_all("a", href=_PADRAO_LINK_DOWNLOAD) if primeira_linha else []
+        if padrao_alvo.match(texto_bloco):
+            if not achou_avulso:
+                achou_avulso = True
+                avulsas = [(a.get_text(strip=True), a["href"], None) for a in links_magnet]
+            continue
+        lote = _intervalo_do_lote(texto_bloco)
+        if not lote or not lote[0] <= int(numero_episodio) <= lote[1]:
+            continue
+        for a in links_magnet:
+            rotulo = f"{a.get_text(strip=True)} ({texto_bloco})"
+            if _opcao_sem_censura(rotulo, a["href"]):
+                lotes.append((rotulo, a["href"], lote))
+    return avulsas + lotes
 
 
 # ======================================================
@@ -891,8 +1191,21 @@ def _registrar_falha_download(chave, numero_episodio, motivo):
     _salvar_animes(animes)
 
 
-def baixar_episodio(chave, registro, numero_episodio):
-    """Extrai o magnet do episódio (1080p HEVC de preferência) e manda pro
+def _adicionar_torrent(cliente, link, pasta_destino, parar_no_metadado=False):
+    """Manda magnet ou .torrent pro qBittorrent. `parar_no_metadado`: para ao
+    receber a lista de arquivos (lote/pacote), antes de baixar qualquer coisa."""
+    extra = {"stop_condition": "MetadataReceived"} if parar_no_metadado else {}
+    if link.startswith("magnet:"):
+        extra["urls"] = link
+    else:
+        # Mesmos bytes de que saiu o hash - o qBittorrent não precisa
+        # buscar o nyaa.si de novo.
+        extra["torrent_files"] = _obter_torrent(link)[0]
+    cliente.torrents_add(save_path=pasta_destino, category=CATEGORIA_QBITTORRENT, **extra)
+
+
+def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False):
+    """Extrai o magnet do episódio (sem censura e 1080p HEVC de preferência) e manda pro
     qBittorrent - `save_path` é a pasta de downloads configurada no Painel
     (obter_anime_pasta_downloads, default "E:\\Downloads" - a mesma pasta onde o
     usuário já mantém episódio baixado e ainda não assistido, sem subpasta por
@@ -901,8 +1214,16 @@ def baixar_episodio(chave, registro, numero_episodio):
     do próprio anime, pra verificar_downloads_em_andamento() saber o que
     acompanhar. Não faz nada (devolve False) se o episódio já foi baixado (ou
     assistido), já está baixando, ou se não achou nenhum magnet - idempotente,
-    seguro de chamar toda vez que processar_downloads_pendentes rodar."""
-    if registro.get("episodios", {}).get(str(numero_episodio)) in ("baixado", "assistido"):
+    seguro de chamar toda vez que processar_downloads_pendentes rodar.
+
+    `rebaixar_sem_censura` (2026-09-24, exceção pedida pelo usuário pra
+    Haite Kudasai, Takamine-san, baixado com censura antes da prioridade
+    existir): baixa de novo um episódio já "baixado"/"assistido", mas só se
+    a melhor opção for sem censura. O arquivo novo sai com sufixo
+    SUFIXO_SEM_CENSURA e o antigo fica intocado.
+
+    `numero_episodio` também aceita "especial-K" (ver _eh_especial)."""
+    if _status_episodio(registro, numero_episodio) in ("baixado", "assistido") and not rebaixar_sem_censura:
         return False
     if str(numero_episodio) in registro.get("downloads_em_andamento", {}):
         return False
@@ -913,26 +1234,42 @@ def baixar_episodio(chave, registro, numero_episodio):
     # seria escolhido de novo.
     tentados = set(registro.get("episodios_magnets_tentados", {}).get(str(numero_episodio), []))
     total_opcoes = len(opcoes)
-    opcoes = [(rotulo, m) for rotulo, m in opcoes if _hash_do_magnet(m) not in tentados]
-    magnet = _escolher_melhor_magnet(opcoes, numero_episodio)
+    # .torrent que não baixa (removido do nyaa.si) não é opção.
+    opcoes = [o for o in opcoes
+              if _hash_da_opcao(o[1]) not in tentados
+              and (o[1].startswith("magnet:") or _obter_torrent(o[1]) is not None)]
+    rotulo_ep = _rotulo_episodio(registro, numero_episodio)
+    magnet = _escolher_melhor_magnet(opcoes, None if _eh_especial(numero_episodio) else numero_episodio)
+    escolhida = next((o for o in opcoes if o[1] == magnet), None)
+    if rebaixar_sem_censura and not (escolhida and _opcao_sem_censura(escolhida[0], magnet)):
+        print(f" [SISTEMA] {registro['titulo']} Episódio {rotulo_ep}: sem opção sem censura, não vou baixar de novo.")
+        return False
     if not magnet:
         motivo = "todos os magnets disponíveis já travaram" if total_opcoes else "nenhum magnet na página do anime"
-        print(f" [SISTEMA] Nenhum magnet encontrado pra {registro['titulo']} Episódio {numero_episodio} ({motivo}).")
+        print(f" [SISTEMA] Nenhum magnet encontrado pra {registro['titulo']} Episódio {rotulo_ep} ({motivo}).")
         _registrar_falha_download(chave, numero_episodio, motivo)
         return False
 
-    hash_torrent = _hash_do_magnet(magnet)
+    hash_torrent = _hash_da_opcao(magnet)
     if not hash_torrent:
-        print(f" [SISTEMA] Magnet de {registro['titulo']} Episódio {numero_episodio} sem hash reconhecível - pulando.")
+        print(f" [SISTEMA] Magnet de {registro['titulo']} Episódio {rotulo_ep} sem hash reconhecível - pulando.")
         _registrar_falha_download(chave, numero_episodio, "magnet sem hash reconhecível")
         return False
 
     pasta_destino = obter_anime_pasta_downloads()
     os.makedirs(pasta_destino, exist_ok=True)
+    lote = escolhida[2] if escolhida and len(escolhida) > 2 else None
+    # Lote já acompanhado por outro episódio deste anime: o mesmo torrent
+    # serve, _aplicar_selecao_lotes só liga o arquivo deste episódio.
+    lote_ja_no_cliente = bool(lote) and any(
+        info.get("hash") == hash_torrent for info in registro.get("downloads_em_andamento", {}).values())
     import qbittorrentapi
     try:
         cliente = _cliente_qbittorrent()
-        cliente.torrents_add(urls=magnet, save_path=pasta_destino, category=CATEGORIA_QBITTORRENT)
+        if not lote_ja_no_cliente:
+            # Lote para ao receber o metadado: nada baixa antes de
+            # _aplicar_selecao_lotes desligar os episódios não pedidos.
+            _adicionar_torrent(cliente, magnet, pasta_destino, parar_no_metadado=bool(lote))
     except qbittorrentapi.Conflict409Error:
         # 🔥 2026-08-04, bug real reportado - "por que Black Torch não baixou?":
         # 409 Conflict do qBittorrent significa que esse HASH já existe no
@@ -947,30 +1284,37 @@ def baixar_episodio(chave, registro, numero_episodio):
         # pra parar de tentar de novo - conta pra `_episodios_a_baixar` (fecha
         # o gap) mas NÃO conta pra `obter_ultimos_episodios_por_status`
         # (não afirma falsamente que está baixado/assistido).
-        print(f" [SISTEMA] 🎬 {registro['titulo']} Episódio {numero_episodio} já existe no qBittorrent (hash conhecido - provavelmente baixado por fora do fluxo automático) - não vou tentar de novo. Confira manualmente se o arquivo está na sua biblioteca.")
+        print(f" [SISTEMA] 🎬 {registro['titulo']} Episódio {rotulo_ep} já existe no qBittorrent (hash conhecido - provavelmente baixado por fora do fluxo automático) - não vou tentar de novo. Confira manualmente se o arquivo está na sua biblioteca.")
         animes = _carregar_animes()
         if chave in animes:
-            animes[chave].setdefault("episodios", {})[str(numero_episodio)] = "conflito_qbittorrent"
+            _definir_status_episodio(animes[chave], numero_episodio, "conflito_qbittorrent")
             _salvar_animes(animes)
         return False
     except Exception as e:
-        print(f" [SISTEMA] Erro ao mandar {registro['titulo']} Episódio {numero_episodio} pro qBittorrent: {e}")
+        print(f" [SISTEMA] Erro ao mandar {registro['titulo']} Episódio {rotulo_ep} pro qBittorrent: {e}")
         _registrar_falha_download(chave, numero_episodio, f"erro no qBittorrent: {e}")
         return False
 
     animes = _carregar_animes()
     if chave in animes:
         agora = datetime.now().strftime("%Y-%m-%d %H:%M")
-        animes[chave].setdefault("downloads_em_andamento", {})[str(numero_episodio)] = {
+        info_download = {
             "hash": hash_torrent, "pasta": pasta_destino,
             # 🔥 2026-09-24: base pra detectar download travado
             # (_tratar_downloads_travados) - atualizado a cada avanço real.
             "progresso": 0.0, "progresso_em": agora,
+            # Marca o nome final com SUFIXO_SEM_CENSURA na renomeação.
+            "sem_censura": bool(escolhida and _opcao_sem_censura(escolhida[0], magnet)),
         }
+        if lote:
+            info_download["lote"] = list(lote)
+        if rebaixar_sem_censura:
+            info_download["rebaixar_sem_censura"] = True
+        animes[chave].setdefault("downloads_em_andamento", {})[str(numero_episodio)] = info_download
         animes[chave].setdefault("episodios_download_disparado_em", {})[str(numero_episodio)] = f"{agora} ({hash_torrent})"
         animes[chave].get("episodios_falha_download", {}).pop(str(numero_episodio), None)
         _salvar_animes(animes)
-    print(f" [SISTEMA] 🎬 Baixando {registro['titulo']} Episódio {numero_episodio} ({[r for r, m in opcoes if m == magnet][0] if opcoes else '?'})...")
+    print(f" [SISTEMA] 🎬 Baixando {registro['titulo']} Episódio {rotulo_ep} ({escolhida[0] if escolhida else '?'})...")
     return True
 
 
@@ -1035,6 +1379,133 @@ def _episodios_ja_tratados(registro):
     return numeros
 
 
+# ======================================================
+# 📦 PÁGINA SÓ COM PACOTE DA TEMPORADA (sem bloco "Episódio N")
+# ======================================================
+# 🔥 2026-09-24, pedido do usuário (casos reais Kimi no Koto ga
+# Daidaidaidaidaisuki na 100-nin no Kanojo e Hitsugi no Chaika: Avenging
+# Battle): a página tem só um bloco com o nome do anime / "2ª Temporada BD
+# Completo". Sem número no título, a lista de episódios só existe dentro do
+# torrent: o pacote é adicionado parado (`registro["pacote_completo"]`) e,
+# quando o metadado chega, _expandir_pacotes_completos vira cada vídeo num
+# episódio acompanhado como lote. Daí em diante vale o fluxo de lote
+# (seleção, renomeação, raiz da pasta, remoção no último).
+
+
+def _opcoes_pacote_completo(soup):
+    """Opções dos blocos da página quando ela não tem NENHUM "Episódio N"
+    (especial fica de fora). Lista vazia em página normal."""
+    blocos = soup.find_all("div", class_="soraddl")
+    textos = [b.find("h3").get_text(strip=True) if b.find("h3") else "" for b in blocos]
+    if any(_numero_do_bloco(t) is not None for t in textos):
+        return []
+    opcoes = []
+    for bloco, texto in zip(blocos, textos):
+        if _PADRAO_BLOCO_ESPECIAL.match(texto):
+            continue
+        linha = bloco.find("tr")
+        for a in (linha.find_all("a", href=_PADRAO_LINK_DOWNLOAD) if linha else []):
+            opcoes.append((f"{a.get_text(strip=True)} ({texto})", a["href"], None))
+    return opcoes
+
+
+def _baixar_pacote_completo(chave, registro):
+    """Dispara o pacote da temporada de um anime sem "Episódio N" na página.
+    Devolve True se adicionou. Só roda sem `ultimo_episodio_visto` (página
+    normal sempre tem) e sem pacote já em andamento."""
+    if registro.get("ultimo_episodio_visto") is not None or registro.get("pacote_completo"):
+        return False
+    try:
+        soup = BeautifulSoup(_obter_html_darkmahou(registro["url"]), "html.parser")
+    except Exception as e:
+        print(f" [SISTEMA] Erro ao consultar página de {registro['titulo']}: {e}")
+        return False
+    tentados = set(registro.get("pacote_completo_tentados", []))
+    opcoes = [o for o in _opcoes_pacote_completo(soup)
+              if (o[1].startswith("magnet:") or _obter_torrent(o[1]) is not None)
+              and _hash_da_opcao(o[1]) not in tentados]
+    link = _escolher_melhor_magnet(opcoes)
+    hash_torrent = _hash_da_opcao(link) if link else None
+    if not hash_torrent:
+        return False
+    rotulo = next(o[0] for o in opcoes if o[1] == link)
+    try:
+        _adicionar_torrent(_cliente_qbittorrent(), link, obter_anime_pasta_downloads(), parar_no_metadado=True)
+    except Exception as e:
+        print(f" [SISTEMA] Erro ao mandar o pacote de {registro['titulo']} pro qBittorrent: {e}")
+        return False
+    with lock_estado_animes:
+        animes = _carregar_animes()
+        if chave in animes:
+            animes[chave]["pacote_completo"] = {
+                "hash": hash_torrent, "rotulo": rotulo, "aguardando_arquivos": True,
+                "desde": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "sem_censura": _opcao_sem_censura(rotulo, link),
+            }
+            _salvar_animes(animes)
+    print(f" [SISTEMA] 🎬 Baixando pacote da temporada de {registro['titulo']} ({rotulo}) - episódios saem da lista de arquivos do torrent.")
+    return True
+
+
+def _expandir_pacotes_completos(cliente, animes):
+    """Pacote com metadado recebido: cada vídeo com número no nome vira
+    episódio em `downloads_em_andamento` (como lote), só os ainda não
+    tratados. Sem metadado por `anime_download_travado_horas`, o pacote sai
+    e a próxima checagem tenta outra opção. Devolve True se mudou estado."""
+    mudou = False
+    agora = datetime.now()
+    limite = timedelta(hours=obter_anime_download_travado_horas())
+    for chave, registro in animes.items():
+        pacote = registro.get("pacote_completo")
+        if not pacote or not pacote.get("aguardando_arquivos"):
+            continue
+        try:
+            arquivos = cliente.torrents_files(torrent_hash=pacote["hash"])
+        except Exception as e:
+            print(f" [SISTEMA] Erro ao listar arquivos do pacote de {registro['titulo']}: {e}")
+            continue
+        numeros = sorted({
+            n for n in (_numero_episodio_no_nome_arquivo(f.name) for f in arquivos
+                        if f.name.lower().endswith(EXTENSOES_VIDEO))
+            if n is not None
+        })
+        if not numeros:
+            sem_metadado = not arquivos
+            if sem_metadado and agora - datetime.strptime(pacote["desde"], "%Y-%m-%d %H:%M") < limite:
+                continue  # metadado ainda não chegou
+            motivo = "sem metadado" if sem_metadado else "nenhum vídeo com número de episódio no nome"
+            print(f" [SISTEMA] ⚠️ Pacote de {registro['titulo']} descartado ({motivo}) - a próxima checagem tenta outra opção.")
+            try:
+                cliente.torrents_delete(delete_files=False, torrent_hashes=pacote["hash"])
+            except Exception as e:
+                print(f" [SISTEMA] Erro ao remover pacote {pacote['hash']}: {e}")
+            registro.setdefault("pacote_completo_tentados", []).append(pacote["hash"])
+            registro.pop("pacote_completo")
+            mudou = True
+            continue
+        carimbo = agora.strftime("%Y-%m-%d %H:%M")
+        tratados = _episodios_ja_tratados(registro)
+        novos = [n for n in numeros if n not in tratados]
+        for n in novos:
+            registro.setdefault("downloads_em_andamento", {})[str(n)] = {
+                "hash": pacote["hash"], "pasta": obter_anime_pasta_downloads(),
+                "progresso": 0.0, "progresso_em": carimbo,
+                "sem_censura": pacote.get("sem_censura", False), "lote": [numeros[0], numeros[-1]],
+            }
+            registro.setdefault("episodios_download_disparado_em", {})[str(n)] = f"{carimbo} ({pacote['hash']}, pacote)"
+        registro["ultimo_episodio_visto"] = max(numeros[-1], registro.get("ultimo_episodio_visto") or 0)
+        pacote["aguardando_arquivos"] = False
+        pacote["episodios"] = numeros
+        if not novos:
+            try:
+                cliente.torrents_delete(delete_files=False, torrent_hashes=pacote["hash"])
+            except Exception as e:
+                print(f" [SISTEMA] Erro ao remover pacote {pacote['hash']}: {e}")
+        print(f" [SISTEMA] 🎬 Pacote de {registro['titulo']}: {len(numeros)} episódios no torrent, {len(novos)} a baixar.")
+        mudou = True
+    return mudou
+
+
 def _baixar_pendentes_do_registro(chave, registro):
     """Baixa (fechando o gap, ver _episodios_a_baixar) todo episódio pendente
     de UM anime específico - usado tanto pelo loop diário
@@ -1049,6 +1520,12 @@ def _baixar_pendentes_do_registro(chave, registro):
     numeros_disparados, numeros_falhos = [], []
     for n in _episodios_a_baixar(registro):
         (numeros_disparados if baixar_episodio(chave, registro, n) else numeros_falhos).append(n)
+    # Especiais vão com o rótulo ("6.5 - Especial 1") pra notificação/histórico.
+    for ident in _especiais_a_baixar(chave, registro):
+        disparou = baixar_episodio(chave, registro, ident)
+        (numeros_disparados if disparou else numeros_falhos).append(_rotulo_episodio(registro, ident))
+    if _baixar_pacote_completo(chave, registro):
+        numeros_disparados.append("pacote da temporada")
     return len(numeros_disparados), numeros_disparados, numeros_falhos
 
 
@@ -1233,12 +1710,8 @@ def verificar_downloads_em_andamento():
     if not qbittorrent_configurado():
         return 0
     animes = _carregar_animes()
-    pendentes = [
-        (chave, str(ep), info)
-        for chave, registro in animes.items()
-        for ep, info in registro.get("downloads_em_andamento", {}).items()
-    ]
-    if not pendentes:
+    tem_pacote = any(r.get("pacote_completo", {}).get("aguardando_arquivos") for r in animes.values())
+    if not tem_pacote and not any(r.get("downloads_em_andamento") for r in animes.values()):
         return 0
 
     try:
@@ -1247,18 +1720,25 @@ def verificar_downloads_em_andamento():
         print(f" [SISTEMA] Erro ao conectar no qBittorrent pra checar downloads: {e}")
         return 0
 
+    mudou = _expandir_pacotes_completos(cliente, animes) if tem_pacote else False
+    pendentes = [
+        (chave, str(ep), info)
+        for chave, registro in animes.items()
+        for ep, info in registro.get("downloads_em_andamento", {}).items()
+    ]
     concluidos = 0
-    mudou = False
+    mudou = _aplicar_selecao_lotes(cliente, animes) or mudou
     travados = []
     limite_travado = timedelta(hours=obter_anime_download_travado_horas())
     for chave, numero_episodio_str, info in pendentes:
         registro = animes[chave]
-        if registro.get("episodios", {}).get(numero_episodio_str) in ("baixado", "assistido"):
+        status_atual = _status_episodio(registro, numero_episodio_str)
+        if status_atual in ("baixado", "assistido") and not info.get("rebaixar_sem_censura"):
             # Um estado antigo pode sobreviver a uma conclusão anterior. Não o
             # deixe rebaixar um episódio assistido nem tocar em um torrent que
             # o usuário possa estar mantendo no qBittorrent por conta própria.
             registro.get("downloads_em_andamento", {}).pop(numero_episodio_str, None)
-            print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: acompanhamento antigo removido; o episódio já está marcado como {registro['episodios'][numero_episodio_str]}.")
+            print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: acompanhamento antigo removido; o episódio já está marcado como {status_atual}.")
             mudou = True
             continue
         try:
@@ -1288,9 +1768,16 @@ def verificar_downloads_em_andamento():
 
         agora = datetime.now().strftime("%Y-%m-%d %H:%M")
         caminho_conteudo = torrents[0].content_path or info["pasta"]
-        arquivo_video = _maior_arquivo_video(caminho_conteudo)
+        if info.get("lote"):
+            # Lote: o maior vídeo da pasta pode ser outro episódio - vale o
+            # arquivo do próprio torrent com o número deste episódio.
+            arquivo_lote = _arquivo_do_episodio_no_lote(cliente, info["hash"], int(numero_episodio_str))
+            arquivo_video = os.path.join(torrents[0].save_path, arquivo_lote.name) if arquivo_lote else None
+        else:
+            arquivo_video = _maior_arquivo_video(caminho_conteudo)
         if arquivo_video:
-            episodio_no_arquivo = _numero_episodio_no_nome_arquivo(arquivo_video)
+            # Especial não tem número próprio pra conferir no nome.
+            episodio_no_arquivo = None if _eh_especial(numero_episodio_str) else _numero_episodio_no_nome_arquivo(arquivo_video)
             if episodio_no_arquivo is not None and episodio_no_arquivo != int(numero_episodio_str):
                 if _arquivo_pertence_ao_torrent(cliente, info["hash"], arquivo_video):
                     # 🔥 2026-09-24 (Bleach E08 travado desde 23/09): fansub
@@ -1322,11 +1809,26 @@ def verificar_downloads_em_andamento():
                     continue
             extensao = os.path.splitext(arquivo_video)[1]
             numero_temporada = _detectar_numero_temporada(registro["titulo"])
-            nome_novo = f"{_sanitizar_nome_arquivo(registro['titulo'])} - S{numero_temporada:02d}E{int(numero_episodio_str):02d}{extensao}"
-            caminho_novo = os.path.join(os.path.dirname(arquivo_video), nome_novo)
+            sufixo = SUFIXO_SEM_CENSURA if info.get("sem_censura") else ""
+            if _eh_especial(numero_episodio_str):
+                parte_ep = f"E{_dados_especial(registro, numero_episodio_str).get('apos', 0):02d}.5 - Especial {_ordem_especial(numero_episodio_str)}"
+            else:
+                parte_ep = f"E{int(numero_episodio_str):02d}"
+            nome_novo = f"{_sanitizar_nome_arquivo(registro['titulo'])} - S{numero_temporada:02d}{parte_ep}{sufixo}{extensao}"
+            # Lote sai da subpasta do torrent e vai pra raiz da pasta de
+            # downloads, junto dos outros episódios (2026-09-24, pedido do
+            # usuário: "ficarem tudo em downloads com os outros").
+            pasta_final = torrents[0].save_path if info.get("lote") else os.path.dirname(arquivo_video)
+            caminho_novo = os.path.join(pasta_final, nome_novo)
             try:
                 if not os.path.exists(caminho_novo):
-                    os.rename(arquivo_video, caminho_novo)
+                    if info.get("lote"):
+                        # Torrent pode continuar ativo pros outros episódios
+                        # do lote: renomeia pela API pra não virar missingFiles.
+                        _renomear_arquivo_via_api_qbittorrent(
+                            cliente, torrents[0], arquivo_video, nome_novo, na_raiz=True)
+                    else:
+                        os.rename(arquivo_video, caminho_novo)
                     registro.setdefault("episodios_renomeado_em", {})[numero_episodio_str] = agora
                 else:
                     registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = (
@@ -1335,7 +1837,7 @@ def verificar_downloads_em_andamento():
                     print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: destino já existe; mantendo o torrent em acompanhamento.")
                     mudou = True
                     continue
-            except OSError as e:
+            except Exception as e:
                 print(f" [SISTEMA] Erro ao renomear {arquivo_video}: {e}")
                 registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = f"{agora}: {e}"
                 mudou = True
@@ -1358,23 +1860,110 @@ def verificar_downloads_em_andamento():
             mudou = True
             continue
 
-        registro.setdefault("episodios", {})[numero_episodio_str] = "baixado"
+        # Rebaixamento sem censura de episódio já assistido: não volta pra "baixado".
+        if _status_episodio(registro, numero_episodio_str) != "assistido":
+            _definir_status_episodio(registro, numero_episodio_str, "baixado")
         registro.setdefault("episodios_baixado_em", {})[numero_episodio_str] = agora
         registro.get("downloads_em_andamento", {}).pop(numero_episodio_str, None)
         concluidos += 1
         mudou = True
-        print(f" [SISTEMA] 🎬 Download concluído: {registro['titulo']} Episódio {numero_episodio_str}.")
+        print(f" [SISTEMA] 🎬 Download concluído: {registro['titulo']} Episódio {_rotulo_episodio(registro, numero_episodio_str)}.")
+        if _hash_ainda_acompanhado(animes, info["hash"]):
+            continue  # outro episódio do mesmo lote ainda depende do torrent
         try:
             cliente.torrents_delete(delete_files=False, torrent_hashes=info["hash"])
             registro.setdefault("episodios_removido_qbittorrent_em", {})[numero_episodio_str] = agora
         except Exception as e:
             print(f" [SISTEMA] Erro ao remover {registro['titulo']} Episódio {numero_episodio_str} da lista do qBittorrent: {e}")
+        if info.get("lote"):
+            _remover_subpastas_vazias_do_lote(torrents[0].save_path, arquivo_video)
 
     if mudou:
         _salvar_animes(animes)
     if travados:
         _tratar_downloads_travados(cliente, travados)
     return concluidos
+
+
+SUFIXO_SEM_CENSURA = " [Sem Censura]"
+
+
+def _hash_ainda_acompanhado(animes, hash_torrent):
+    """True se algum episódio ainda acompanha `hash_torrent` (lote
+    compartilhado) - aí o torrent não pode sair do qBittorrent."""
+    return any(
+        info.get("hash") == hash_torrent
+        for registro in animes.values()
+        for info in registro.get("downloads_em_andamento", {}).values()
+    )
+
+
+def _arquivo_do_episodio_no_lote(cliente, hash_torrent, numero_episodio, arquivos=None):
+    """Arquivo de vídeo do lote cujo nome declara `numero_episodio`, ou None."""
+    if arquivos is None:
+        try:
+            arquivos = cliente.torrents_files(torrent_hash=hash_torrent)
+        except Exception:
+            return None
+    for f in arquivos:
+        if f.name.lower().endswith(EXTENSOES_VIDEO) and _numero_episodio_no_nome_arquivo(f.name) == numero_episodio:
+            return f
+    return None
+
+
+def _aplicar_selecao_lotes(cliente, animes):
+    """Deixa baixando, em cada lote acompanhado, só os arquivos dos episódios
+    pedidos (prioridade 0 no resto) e retoma o torrent, que foi adicionado
+    com `stop_condition="MetadataReceived"`. Idempotente: só chama a API
+    quando a seleção atual difere da desejada - cobre também um episódio
+    novo pedido depois no mesmo lote. Sem metadado ainda, espera a próxima
+    volta. Devolve True se registrou algo no estado."""
+    por_hash = {}
+    for chave, registro in animes.items():
+        for ep, info in registro.get("downloads_em_andamento", {}).items():
+            if info.get("lote"):
+                por_hash.setdefault(info["hash"], []).append((registro, ep))
+    mudou = False
+    for hash_torrent, episodios in por_hash.items():
+        try:
+            arquivos = cliente.torrents_files(torrent_hash=hash_torrent)
+        except Exception as e:
+            print(f" [SISTEMA] Erro ao listar arquivos do lote {hash_torrent}: {e}")
+            continue
+        if not arquivos:
+            continue  # metadado ainda não chegou
+        desejados = set()
+        for registro, ep in episodios:
+            arquivo = _arquivo_do_episodio_no_lote(cliente, hash_torrent, int(ep), arquivos)
+            if arquivo is not None:
+                desejados.add(id(arquivo))
+            elif not registro.get("episodios_erro_renomear", {}).get(ep, "").endswith("não encontrado no lote"):
+                agora = datetime.now().strftime("%Y-%m-%d %H:%M")
+                registro.setdefault("episodios_erro_renomear", {})[ep] = f"{agora}: arquivo do episódio não encontrado no lote"
+                print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {ep}: arquivo não encontrado no lote {hash_torrent}.")
+                mudou = True
+        if not desejados:
+            continue  # nunca desligar tudo
+        ligar = [getattr(f, "index", i) for i, f in enumerate(arquivos) if id(f) in desejados and f.priority == 0]
+        desligar = [getattr(f, "index", i) for i, f in enumerate(arquivos) if id(f) not in desejados and f.priority != 0]
+        infos = [registro["downloads_em_andamento"][ep] for registro, ep in episodios]
+        # `lote_iniciado` cobre o lote em que todo arquivo foi pedido: nenhuma
+        # prioridade muda, mas o torrent ainda precisa sair do stop_condition.
+        if not ligar and not desligar and all(info.get("lote_iniciado") for info in infos):
+            continue
+        try:
+            if desligar:
+                cliente.torrents_file_priority(torrent_hash=hash_torrent, file_ids=desligar, priority=0)
+            if ligar:
+                cliente.torrents_file_priority(torrent_hash=hash_torrent, file_ids=ligar, priority=1)
+            cliente.torrents_start(torrent_hashes=hash_torrent)
+        except Exception as e:
+            print(f" [SISTEMA] Erro ao selecionar arquivos do lote {hash_torrent}: {e}")
+            continue
+        for info in infos:
+            info["lote_iniciado"] = True
+        mudou = True
+    return mudou
 
 
 def _arquivo_pertence_ao_torrent(cliente, hash_torrent, caminho_arquivo):
@@ -1405,11 +1994,12 @@ def _tratar_downloads_travados(cliente, travados):
             continue
         porcentagem = f"{progresso * 100:.0f}%" if progresso is not None else "fora do qBittorrent"
         print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: download travado ({porcentagem}) - tentando outro magnet.")
-        try:
-            cliente.torrents_delete(delete_files=False, torrent_hashes=hash_torrent)
-        except Exception as e:
-            print(f" [SISTEMA] Erro ao remover torrent travado {hash_torrent}: {e}")
         registro["downloads_em_andamento"].pop(numero_episodio_str, None)
+        if not _hash_ainda_acompanhado(animes, hash_torrent):
+            try:
+                cliente.torrents_delete(delete_files=False, torrent_hashes=hash_torrent)
+            except Exception as e:
+                print(f" [SISTEMA] Erro ao remover torrent travado {hash_torrent}: {e}")
         tentados = registro.setdefault("episodios_magnets_tentados", {}).setdefault(numero_episodio_str, [])
         if hash_torrent not in tentados:
             tentados.append(hash_torrent)
@@ -1417,7 +2007,7 @@ def _tratar_downloads_travados(cliente, travados):
             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}: {hash_torrent} parado em {porcentagem}"
         )
         _salvar_animes(animes)
-        baixar_episodio(chave, registro, int(numero_episodio_str))
+        baixar_episodio(chave, registro, numero_episodio_str if _eh_especial(numero_episodio_str) else int(numero_episodio_str))
 
 
 # ======================================================
@@ -1426,21 +2016,24 @@ def _tratar_downloads_travados(cliente, travados):
 # 🔥 Temporada ("S\d+") opcional no padrão (2026-08-03, pedido do usuário -
 # incluir temporada no nome renomeado) - continua reconhecendo arquivos já
 # renomeados ANTES dessa mudança (só "Título - E08.ext", sem temporada).
-_PADRAO_NOME_ARQUIVO = re.compile(r"^(.*) - (?:S\d+)?E(\d+)\.\w+$")
+# Sufixo " [Sem Censura]" opcional (2026-09-24, SUFIXO_SEM_CENSURA).
+_PADRAO_NOME_ARQUIVO = re.compile(r"^(.*) - (?:S\d+)?E(\d+)(?: \[Sem Censura\])?\.\w+$")
 
 
-def _mapear_arquivos_por_titulo(pasta):
+def _mapear_arquivos_por_titulo(pasta, ignorar=()):
     """Varre `pasta` (recursivo - o usuário pode organizar em subpastas) por
     arquivos de vídeo no padrão "{Título sanitizado} - S{SS}E{NN}.ext" (o
     mesmo que verificar_downloads_em_andamento produz - temporada opcional,
     reconhece também o padrão antigo sem temporada) e devolve
-    {titulo_sanitizado: {numero_episodio: True}}. Ignora qualquer arquivo fora
+    {titulo_sanitizado: {numero_episodio, ...}}. Ignora qualquer arquivo fora
     do padrão (o usuário pode ter outras coisas nas mesmas pastas, não é
-    problema nosso)."""
+    problema nosso) e as subpastas em `ignorar` (caminhos completos)."""
     resultado = {}
     if not pasta or not os.path.isdir(pasta):
         return resultado
-    for raiz, _, arquivos in os.walk(pasta):
+    ignorar = {os.path.normcase(os.path.normpath(p)) for p in ignorar}
+    for raiz, subpastas, arquivos in os.walk(pasta):
+        subpastas[:] = [s for s in subpastas if os.path.normcase(os.path.normpath(os.path.join(raiz, s))) not in ignorar]
         for nome in arquivos:
             if not nome.lower().endswith(EXTENSOES_VIDEO):
                 continue
@@ -1450,6 +2043,96 @@ def _mapear_arquivos_por_titulo(pasta):
             titulo_sanitizado, numero_episodio = match.group(1), int(match.group(2))
             resultado.setdefault(titulo_sanitizado, set()).add(numero_episodio)
     return resultado
+
+
+# ---- Anime finalizado em pasta própria (2026-09-24, pedido do usuário) ----
+# Episódio de anime que já terminou de passar (anime_ja_finalizado) sai da
+# raiz da pasta de downloads para "{pasta de assistidos}/{2026 3-Verão}/{Título}".
+# A temporada é a do primeiro episódio organizado e fica gravada em
+# `registro["temporada_organizada"]`, para os episódios seguintes irem para a
+# mesma pasta mesmo que a estação mude no meio. Essas pastas ficam dentro da
+# pasta de assistidos, mas o arquivo nelas conta como "baixado";
+# "assistido" vem do player do MOIRAI (_concluir_episodio_assistido marca
+# sem mover) ou do Painel.
+
+
+def _pastas_de_temporada():
+    """Caminhos completos das pastas "AAAA N-Estação" direto na pasta de assistidos."""
+    pasta = obter_anime_pasta_assistidos()
+    if not pasta or not os.path.isdir(pasta):
+        return []
+    return [
+        os.path.join(pasta, nome) for nome in os.listdir(pasta)
+        if _PADRAO_PASTA_TEMPORADA.match(nome) and os.path.isdir(os.path.join(pasta, nome))
+    ]
+
+
+def _dentro_de_pasta_temporada(caminho_arquivo):
+    caminho = os.path.normcase(os.path.abspath(caminho_arquivo))
+    return any(
+        caminho.startswith(os.path.normcase(os.path.abspath(p)) + os.sep) for p in _pastas_de_temporada()
+    )
+
+
+def _titulo_do_nome_arquivo(nome):
+    """Título sanitizado de um episódio renomeado pelo MOIRAI (normal ou especial), ou None."""
+    match = _PADRAO_NOME_ARQUIVO.match(nome)
+    if match:
+        return match.group(1)
+    match = _PADRAO_NOME_ESPECIAL.search(nome)
+    return nome[:match.start()] if match else None
+
+
+def organizar_animes_finalizados():
+    """Move os episódios de anime finalizado da raiz da pasta de downloads
+    para a pasta própria do anime. Chamada pelo loop de downloads (main.py).
+    Anime com download em andamento ou pacote aguardando fica para depois:
+    o arquivo de um lote continua no torrent até o último episódio, e mover
+    antes faria o qBittorrent perder o arquivo. Nunca sobrescreve: se o
+    destino já existe, o arquivo fica onde está. Devolve quantos moveu."""
+    pasta_downloads = obter_anime_pasta_downloads()
+    pasta_assistidos = obter_anime_pasta_assistidos()
+    if not pasta_downloads or not pasta_assistidos or not os.path.isdir(pasta_downloads):
+        return 0
+    animes = _carregar_animes()
+    chave_por_titulo = {
+        _sanitizar_nome_arquivo(r["titulo"]): c for c, r in animes.items()
+        if r.get("interesse") == "tenho_interesse" and not r.get("downloads_em_andamento")
+        and not r.get("pacote_completo", {}).get("aguardando_arquivos") and anime_ja_finalizado(r)
+    }
+    if not chave_por_titulo:
+        return 0
+
+    movidos, mudou = 0, False
+    for nome in sorted(os.listdir(pasta_downloads)):
+        origem = os.path.join(pasta_downloads, nome)
+        if not nome.lower().endswith(EXTENSOES_VIDEO) or not os.path.isfile(origem):
+            continue
+        titulo_sanitizado = _titulo_do_nome_arquivo(nome)
+        chave = chave_por_titulo.get(titulo_sanitizado)
+        if not chave:
+            continue
+        registro = animes[chave]
+        if "temporada_organizada" not in registro:
+            registro["temporada_organizada"] = nome_pasta_temporada()
+            mudou = True
+        pasta_anime = os.path.join(pasta_assistidos, registro["temporada_organizada"], titulo_sanitizado)
+        destino = os.path.join(pasta_anime, nome)
+        if os.path.exists(destino):
+            print(f" [SISTEMA] Anime finalizado: \"{nome}\" já existe em {pasta_anime}, ficou na pasta de downloads.")
+            continue
+        try:
+            os.makedirs(pasta_anime, exist_ok=True)
+            shutil.move(origem, destino)
+        except OSError as e:
+            print(f" [SISTEMA] Erro ao mover \"{nome}\" para a pasta do anime finalizado: {e}")
+            continue
+        movidos += 1
+    if mudou:
+        _salvar_animes(animes)
+    if movidos:
+        print(f" [SISTEMA] 📁 {movidos} episódio(s) de anime finalizado movido(s) para a pasta de cada anime.")
+    return movidos
 
 
 def obter_titulos_tenho_interesse():
@@ -1500,11 +2183,11 @@ def obter_primeiro_episodio_baixado(chave):
         return None, None
     prefixo = _sanitizar_nome_arquivo(registro["titulo"])
     pasta = obter_anime_pasta_downloads()
-    if not pasta or not os.path.isdir(pasta):
-        return None, None
+    # Anime finalizado fica numa pasta de temporada dentro da de assistidos (organizar_animes_finalizados).
+    pastas = [p for p in [pasta] + _pastas_de_temporada() if p and os.path.isdir(p)]
     episodios = registro.get("episodios", {})
     candidatos = {}
-    for raiz, _, arquivos in os.walk(pasta):
+    for raiz, _, arquivos in (item for p in pastas for item in os.walk(p)):
         for nome in arquivos:
             if not nome.lower().endswith(EXTENSOES_VIDEO):
                 continue
@@ -1577,12 +2260,24 @@ def _concluir_episodio_assistido(chave, numero_episodio, caminho_arquivo, ao_con
     CHAMAR, não precisa estar definida antes no arquivo) na sequência, sem
     esperar o próximo ciclo do loop de 5min (2026-08-08, pedido do usuário:
     "e quando move a pasta ele já atualiza tudo na gaia e mal?" - antes o
-    estado local ficava instantâneo mas o MAL só pegava no próximo ciclo)."""
+    estado local ficava instantâneo mas o MAL só pegava no próximo ciclo).
+    Episódio na pasta de um anime finalizado (2026-09-24) não sai de lá: o
+    status vira "assistido" direto, porque a varredura conta essas pastas
+    como "baixado"."""
     registro = _carregar_animes().get(chave, {})
 
     pasta_assistidos = obter_anime_pasta_assistidos()
+    na_pasta_do_anime = _dentro_de_pasta_temporada(caminho_arquivo)
+    if na_pasta_do_anime:
+        with lock_estado_animes:
+            animes = _carregar_animes()
+            if chave in animes:
+                animes[chave].setdefault("episodios", {})[str(numero_episodio)] = "assistido"
+                animes[chave].setdefault("episodios_assistido_em", {}).setdefault(
+                    str(numero_episodio), datetime.now().strftime("%Y-%m-%d"))
+                _salvar_animes(animes)
     try:
-        if pasta_assistidos and os.path.isfile(caminho_arquivo):
+        if pasta_assistidos and os.path.isfile(caminho_arquivo) and not na_pasta_do_anime:
             os.makedirs(pasta_assistidos, exist_ok=True)
             destino = os.path.join(pasta_assistidos, os.path.basename(caminho_arquivo))
             if not os.path.exists(destino):
@@ -1591,7 +2286,8 @@ def _concluir_episodio_assistido(chave, numero_episodio, caminho_arquivo, ao_con
         print(f" [SISTEMA] Erro ao mover episódio pra pasta de assistidos: {e}")
     sincronizar_biblioteca_local()
     sincronizar_progresso_mal()
-    print(f" [SISTEMA] 🎬 Episódio {numero_episodio} marcado como assistido (movido pra pasta de assistidos sozinha).")
+    onde = "ficou na pasta do anime" if na_pasta_do_anime else "movido pra pasta de assistidos sozinha"
+    print(f" [SISTEMA] 🎬 Episódio {numero_episodio} marcado como assistido ({onde}).")
     if _callback_episodio_movido_assistidos:
         _callback_episodio_movido_assistidos(registro.get("titulo", chave), numero_episodio)
     if ao_concluir:
@@ -1684,7 +2380,13 @@ def sincronizar_biblioteca_local():
     }
 
     baixados = _mapear_arquivos_por_titulo(obter_anime_pasta_downloads())
-    assistidos = _mapear_arquivos_por_titulo(obter_anime_pasta_assistidos())
+    # Pasta de anime finalizado (organizar_animes_finalizados) fica dentro da
+    # de assistidos, mas o que está nela conta como baixado.
+    pastas_temporada = _pastas_de_temporada()
+    for pasta_temporada in pastas_temporada:
+        for titulo_sanitizado, numeros in _mapear_arquivos_por_titulo(pasta_temporada).items():
+            baixados.setdefault(titulo_sanitizado, set()).update(numeros)
+    assistidos = _mapear_arquivos_por_titulo(obter_anime_pasta_assistidos(), ignorar=pastas_temporada)
 
     mudou = False
     for titulo_sanitizado, chave in titulo_sanitizado_para_chave.items():
@@ -1899,6 +2601,8 @@ def renomear_biblioteca_existente(dry_run=False):
                 match_padrao_gaia = _PADRAO_NOME_ARQUIVO.match(nome)
                 if match_padrao_gaia and match_padrao_gaia.group(1) in titulos_sanitizados_interesse:
                     continue  # 🔥 já no padrão da Gaia, com o título certo - não precisa mexer
+                if _PADRAO_NOME_ESPECIAL.search(nome):
+                    continue  # especial já renomeado ("E06.5 - Especial 1") - não é o E06
 
                 temporada_arquivo, numero_episodio = _extrair_episodio_de_nome_arquivo(nome)
                 if numero_episodio is None:
@@ -1978,7 +2682,7 @@ def _extrair_hashes_por_episodio(url_anime):
         titulo_bloco = bloco.find("h3")
         if not titulo_bloco:
             continue
-        numero_episodio = _numero_episodio_de_texto(titulo_bloco.get_text(strip=True))
+        numero_episodio = _numero_do_bloco(titulo_bloco.get_text(strip=True))
         if numero_episodio is None:
             continue
         hashes = set()
@@ -1991,7 +2695,21 @@ def _extrair_hashes_por_episodio(url_anime):
     return resultado
 
 
-def _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, nome_novo):
+def _remover_subpastas_vazias_do_lote(pasta_base, arquivo_original):
+    """Tira as subpastas do lote que ficaram vazias depois de os episódios
+    irem pra raiz. `os.rmdir` só remove pasta vazia: qualquer arquivo que
+    sobrar (episódio não pedido, legenda) mantém a pasta, nunca é apagado."""
+    pasta = os.path.dirname(arquivo_original)
+    base = os.path.normcase(os.path.abspath(pasta_base))
+    while os.path.normcase(os.path.abspath(pasta)).startswith(base + os.sep):
+        try:
+            os.rmdir(pasta)
+        except OSError:
+            return
+        pasta = os.path.dirname(pasta)
+
+
+def _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, nome_novo, na_raiz=False):
     """Renomeia o arquivo de conteúdo de um torrent chamando
     `torrents_rename_file` da própria API do qBittorrent, em vez de
     `os.rename` cru (2026-08-08, pedido do usuário) - assim o qBittorrent
@@ -2001,9 +2719,12 @@ def _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, nome_
     de rename manual feito assim antes). Precisa do caminho RELATIVO do
     arquivo dentro do torrent (não o caminho absoluto no disco) - calculado a
     partir de `torrent.save_path`, funciona tanto pra torrent de arquivo
-    único quanto pra torrent com pasta (multi-arquivo)."""
+    único quanto pra torrent com pasta (multi-arquivo).
+
+    `na_raiz=True` (lote, 2026-09-24): o caminho novo não repete a subpasta
+    do torrent, então o qBittorrent move o arquivo pra `save_path`."""
     caminho_relativo_atual = os.path.relpath(arquivo_video, torrent.save_path)
-    pasta_relativa = os.path.dirname(caminho_relativo_atual)
+    pasta_relativa = "" if na_raiz else os.path.dirname(caminho_relativo_atual)
     caminho_relativo_novo = os.path.join(pasta_relativa, nome_novo) if pasta_relativa else nome_novo
     cliente.torrents_rename_file(torrent_hash=torrent.hash, old_path=caminho_relativo_atual, new_path=caminho_relativo_novo)
 
