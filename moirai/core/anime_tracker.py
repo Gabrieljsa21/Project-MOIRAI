@@ -46,6 +46,7 @@ chamador quando a estrutura não bate com o esperado):
 """
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -53,10 +54,13 @@ import shutil
 import subprocess
 import threading
 import time
+import unicodedata
 import urllib.parse
 import winreg
+import zipfile
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
+from xml.etree import ElementTree
 
 import requests
 from bs4 import BeautifulSoup
@@ -86,6 +90,12 @@ CATEGORIA_QBITTORRENT = "gaia-animes"
 # um User-Agent de navegador comum já basta, sem precisar de navegador automatizado.
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 _TIMEOUT_REQUEST = 20
+# 🔥 2026-09-25, pedido do usuário ("tem muitos animes q parece q n vao
+# baixar, tenta ver se em outra opcao baixa"): torrent sem NENHUM seeder
+# conectado e sem progresso troca de opção em 2h, sem esperar as
+# `anime_download_travado_horas` (24h) - com várias opções mortas em
+# sequência, esperar 24h por cada uma levava dias.
+_HORAS_TRAVADO_SEM_SEED = 2
 
 
 def _obter_html_darkmahou(url):
@@ -446,20 +456,35 @@ def nome_pasta_temporada(data=None):
 
 
 def anime_ja_finalizado(registro):
-    """True para anime que já terminou de passar: estreou 2 temporadas atrás
-    ou antes, ou estreou na temporada anterior e o site já tem o total de
-    episódios do MAL. Anime da temporada atual, ou da anterior ainda sem o
-    último episódio (dois cours seguidos, caso de Re:Zero 4), fica de fora.
-    Sem temporada de estreia conhecida, também fica de fora."""
+    """True para anime que já terminou de passar: filme, "Status: Completed"
+    na página do DarkMahou (`status_site`), site já com o total de episódios
+    do MAL, ou estreia 2 temporadas atrás ou antes.
+
+    🔥 2026-09-25, pedido do usuário ("tem animes q acredito ja estarem
+    completos q n foram movidos para pasta deles"): antes, anime da
+    temporada atual nunca contava, mesmo com os 12 de 12 episódios (Youjo
+    Senki II, Grand Blue 3...). O total do MAL agora vale em qualquer
+    temporada; ainda sem o último episódio (Re:Zero 4, 18 de 19), fica de
+    fora."""
+    if registro.get("filme") or registro.get("status_site") == "Completed":
+        return True
+    total = registro.get("mal_num_episodios")
+    if total and (registro.get("ultimo_episodio_visto") or 0) >= total:
+        return True
     estreia = chave_ordenacao_temporada(registro.get("temporada_estreia"))
     if estreia == (-1, -1):
         return False
     atual = chave_ordenacao_temporada(obter_temporada_atual())
-    distancia = (atual[0] - estreia[0]) * 4 + atual[1] - estreia[1]
-    if distancia >= 2:
-        return True
-    total = registro.get("mal_num_episodios")
-    return distancia == 1 and bool(total) and (registro.get("ultimo_episodio_visto") or 0) >= total
+    return (atual[0] - estreia[0]) * 4 + atual[1] - estreia[1] >= 2
+
+
+def _status_da_pagina(soup):
+    """"Completed"/"Ongoing" do campo "Status:" da página do anime, ou None."""
+    for span in soup.select(".spe span"):
+        match = re.match(r"\s*Status:\s*(\w+)", span.get_text(" ", strip=True))
+        if match:
+            return match.group(1).capitalize()
+    return None
 
 
 _LIMITE_BACKFILL_TEMPORADA_POR_EXECUCAO = 20
@@ -538,21 +563,38 @@ def listar_ultimos_lancamentos():
 # (lote) continua de fora porque exige espaço logo depois de "dio".
 _PALAVRA_EPISODIO = r"Epi.?[oó]dio"
 _PADRAO_BLOCO_NUMERADO = re.compile(rf"^{_PALAVRA_EPISODIO}\s+0*(\d+)\b", re.IGNORECASE)
+# 🔥 2026-09-25, caso real Boku no Kokoro no Yabai Yatsu Movie: bloco único
+# "Filme Completo Legendado Torrent" caía no fluxo de pacote da temporada,
+# que descartava o torrent por não ter vídeo numerado. Filme é o episódio 1
+# de um anime de 1 episódio só (`registro["filme"]`).
+_PADRAO_BLOCO_FILME = re.compile(r"^Filme\b", re.IGNORECASE)
 
 
 def _numero_do_bloco(texto_bloco):
+    if _PADRAO_BLOCO_ESPECIAL.match(texto_bloco or ""):
+        return None  # "Episódio 00" é especial (ver _PADRAO_BLOCO_ESPECIAL)
+    if _PADRAO_BLOCO_FILME.match(texto_bloco or ""):
+        return 1
     m = _PADRAO_BLOCO_NUMERADO.match(texto_bloco or "")
     return int(m.group(1)) if m else None
 
 
+def _pagina_eh_filme(soup):
+    """True se a página tem bloco "Filme ..." e nenhum "Episódio N"."""
+    textos = [b.find("h3").get_text(strip=True) for b in soup.find_all("div", class_="soraddl") if b.find("h3")]
+    return (any(_PADRAO_BLOCO_FILME.match(t) for t in textos)
+            and not any(_PADRAO_BLOCO_NUMERADO.match(t) and _numero_do_bloco(t) is not None for t in textos))
+
+
 def _ultimo_episodio_da_pagina(soup):
     """MAIOR número entre os blocos "Episódio N" (`div.soraddl`) da página do
-    anime (não assume que vêm em ordem). None se não achar nenhum."""
+    anime (não assume que vêm em ordem), incluindo os episódios de zips de
+    .torrent do Yandex (_episodios_em_zips_yandex). None se não achar nenhum."""
     numeros = [
         _numero_do_bloco(bloco.find("h3").get_text(strip=True))
         for bloco in soup.find_all("div", class_="soraddl") if bloco.find("h3")
     ]
-    numeros = [n for n in numeros if n is not None]
+    numeros = [n for n in numeros if n is not None] + list(_episodios_em_zips_yandex(soup))
     return max(numeros) if numeros else None
 
 
@@ -560,7 +602,7 @@ def _precisa_consultar_pagina(registro):
     """Anime acompanhado que pode ter episódio novo fora da home - pula quem
     já lançou tudo que o MAL diz que existe (temporada encerrada), pra não
     gastar 1 request por anime terminado a cada checagem."""
-    if registro.get("interesse") != "tenho_interesse":
+    if registro.get("interesse") != "tenho_interesse" or registro.get("status_site") == "Completed":
         return False
     total = registro.get("mal_num_episodios")
     ultimo = registro.get("ultimo_episodio_visto")
@@ -591,7 +633,9 @@ def _atualizar_lancamentos_fora_da_home(animes, chaves_na_home, relatorio):
             relatorio["paginas_com_erro"].append(registro["titulo"])
             continue
         relatorio["paginas_consultadas"] += 1
-        ultimo_pagina = _ultimo_episodio_da_pagina(BeautifulSoup(html, "html.parser"))
+        soup = BeautifulSoup(html, "html.parser")
+        registro["status_site"] = _status_da_pagina(soup) or registro.get("status_site")  # anime_ja_finalizado
+        ultimo_pagina = _ultimo_episodio_da_pagina(soup)
         anterior = registro.get("ultimo_episodio_visto")
         if ultimo_pagina is not None and (anterior is None or ultimo_pagina > anterior):
             registro["ultimo_episodio_visto"] = ultimo_pagina
@@ -717,6 +761,8 @@ def adicionar_anime_manual(url):
     registro["interesse"] = "tenho_interesse"
     if ultimo_episodio is not None:
         registro["ultimo_episodio_visto"] = ultimo_episodio
+    registro["filme"] = _pagina_eh_filme(soup)  # 🔥 2026-09-25: o Painel pula a seleção de episódios
+    registro["status_site"] = _status_da_pagina(soup)
     registro["temporada_estreia"] = _extrair_temporada_estreia(soup)  # 🔥 2026-08-14 - já temos o soup, sem request extra
     animes[chave] = registro
     _salvar_animes(animes)
@@ -851,17 +897,57 @@ def _obter_torrent(url):
     em_cache = _cache_torrents.get(url)
     if em_cache and (em_cache[1] is not None or time.time() - em_cache[0] < _SEGUNDOS_CACHE_FALHA_TORRENT):
         return em_cache[1]
+    momento = time.time()
     try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
-        resp.raise_for_status()
-        meta, _ = _bdecode(resp.content)
+        if url.startswith(_PREFIXO_YANDEX_ZIP):
+            url_publica, nome_arquivo = url[len(_PREFIXO_YANDEX_ZIP):].split("#", 1)
+            conteudo = _torrents_do_zip_yandex(url_publica)[nome_arquivo]
+        else:
+            conteudo = _get_nyaa_com_espelho(url, params=None).content
+        meta, _ = _bdecode(conteudo)
         nome = meta[b"info"].get(b"name", b"").decode("utf-8", errors="replace")
-        resultado = (resp.content, hashlib.sha1(meta["_info_bruto"]).hexdigest(), nome)
+        resultado = (conteudo, hashlib.sha1(meta["_info_bruto"]).hexdigest(), nome)
     except Exception as e:
         print(f" [SISTEMA] .torrent indisponível ({url}): {e}")
         resultado = None
-    _cache_torrents[url] = (time.time(), resultado)
+        if isinstance(e, (requests.ConnectionError, requests.Timeout)):
+            # Rede fora não é torrent removido: tenta de novo em 5 min, não em 1h.
+            momento -= _SEGUNDOS_CACHE_FALHA_TORRENT - _SEGUNDOS_CACHE_FALHA_REDE
+    _cache_torrents[url] = (momento, resultado)
     return resultado
+
+
+# 🔥 2026-09-25 (caso real, 15h18): o nyaa.si parou de responder bem na hora
+# da troca dos travados de Shinobi no Ittoki - cada .torrent levava 20s de
+# timeout e o MOIRAI concluía "sem outra opção". O espelho nyaa.land serve os
+# mesmos .torrent (o RSS dele fica atrás do desafio do Cloudflare, então a
+# busca de _buscar_nyaa só ganha com a marcação de "fora"). Com o nyaa.si
+# fora, ele é pulado por `_SEGUNDOS_NYAA_FORA`.
+_PADRAO_HOST_NYAA = re.compile(r"^https?://nyaa\.si(?=/)", re.IGNORECASE)
+_ESPELHO_NYAA = "https://nyaa.land"
+_SEGUNDOS_NYAA_FORA = 600
+_SEGUNDOS_CACHE_FALHA_REDE = 300
+_nyaa_si_fora_ate = [0.0]
+
+
+def _get_nyaa_com_espelho(url, params):
+    """requests.get com o espelho do nyaa quando o nyaa.si não responde
+    (erro HTTP de verdade, como 404, não passa pro espelho). Qualquer outra
+    URL vai direto."""
+    tentativas = [url]
+    if _PADRAO_HOST_NYAA.match(url):
+        espelho = _PADRAO_HOST_NYAA.sub(_ESPELHO_NYAA, url)
+        tentativas = [espelho] if time.time() < _nyaa_si_fora_ate[0] else [url, espelho]
+    for i, alvo in enumerate(tentativas):
+        try:
+            resp = requests.get(alvo, params=params, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
+            resp.raise_for_status()
+            return resp
+        except (requests.ConnectionError, requests.Timeout):
+            if i == len(tentativas) - 1:
+                raise
+            _nyaa_si_fora_ate[0] = time.time() + _SEGUNDOS_NYAA_FORA
+            print(f" [SISTEMA] nyaa.si sem resposta - usando {_ESPELHO_NYAA} pelos próximos {_SEGUNDOS_NYAA_FORA // 60} min.")
 
 
 def _nome_da_opcao(link):
@@ -880,6 +966,156 @@ def _hash_da_opcao(link):
 
 
 # ======================================================
+# 📦 ZIP DE .torrent NO YANDEX DISK (bloco só com link direto)
+# ======================================================
+# 🔥 2026-09-25, pedido do usuário ("se adapta p atender esse tipo ai tbm
+# do bloco", caso real Boku no Kokoro no Yabai Yatsu 2ª Temporada): o bloco
+# "Temporada Completa" só tem Yandex/Jottacloud, mas o Yandex é um zip de
+# ~400 KB com 1 .torrent por episódio. A API pública do Yandex Disk dá o
+# arquivo sem login; cada .torrent vira a opção do seu episódio, com o link
+# sintético "yandex-zip:<url>#<arquivo>" que _obter_torrent resolve - daí
+# em diante é o fluxo normal de .torrent (hash, qBittorrent, renomeação).
+_PREFIXO_YANDEX_ZIP = "yandex-zip:"
+_PADRAO_LINK_YANDEX = re.compile(r"^https?://(?:disk\.yandex\.[a-z.]+|yadi\.sk)/[di]/", re.IGNORECASE)
+_API_YANDEX_PUBLICO = "https://cloud-api.yandex.net/v1/disk/public/resources"
+_TAMANHO_MAX_ZIP_YANDEX = 20 * 1024 * 1024  # zip de .torrent tem KB; maior que isso é vídeo, fora do escopo
+_cache_zips_yandex = {}
+
+
+def _torrents_do_zip_yandex(url_publica):
+    """{nome_do_arquivo: bytes} dos .torrent dentro do zip público do Yandex
+    Disk; {} em qualquer falha (pasta, zip grande, rede). Mesmo cache de
+    _obter_torrent: sucesso vale o processo inteiro, falha 1h."""
+    em_cache = _cache_zips_yandex.get(url_publica)
+    if em_cache and (em_cache[1] or time.time() - em_cache[0] < _SEGUNDOS_CACHE_FALHA_TORRENT):
+        return em_cache[1]
+    torrents = {}
+    try:
+        resp = requests.get(_API_YANDEX_PUBLICO, params={"public_key": url_publica}, timeout=_TIMEOUT_REQUEST)
+        resp.raise_for_status()
+        meta = resp.json()
+        if (meta.get("type") == "file" and meta.get("name", "").lower().endswith(".zip")
+                and meta.get("size", 0) <= _TAMANHO_MAX_ZIP_YANDEX and meta.get("file")):
+            arquivo = requests.get(meta["file"], headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
+            arquivo.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(arquivo.content)) as zip_:
+                for info in zip_.infolist():
+                    if info.filename.lower().endswith(".torrent"):
+                        torrents[os.path.basename(info.filename)] = zip_.read(info)
+    except Exception as e:
+        print(f" [SISTEMA] Zip do Yandex indisponível ({url_publica}): {e}")
+    _cache_zips_yandex[url_publica] = (time.time(), torrents)
+    return torrents
+
+
+def _opcoes_zip_yandex_do_bloco(bloco):
+    """[(numero, rotulo, link_sintético)] dos .torrent com número de episódio
+    no nome, de todo link do Yandex no bloco."""
+    texto_bloco = bloco.find("h3").get_text(strip=True) if bloco.find("h3") else ""
+    opcoes = []
+    for a in bloco.find_all("a", href=_PADRAO_LINK_YANDEX):
+        for nome in _torrents_do_zip_yandex(a["href"]):
+            numero = _numero_episodio_no_nome_arquivo(re.sub(r"\.torrent$", "", nome, flags=re.IGNORECASE))
+            if numero is not None:
+                opcoes.append((numero, f"{a.get_text(strip=True)} ({texto_bloco}: {nome})",
+                               f"{_PREFIXO_YANDEX_ZIP}{a['href']}#{nome}"))
+    return opcoes
+
+
+# ======================================================
+# 🔎 NYAA.SI - RESERVA QUANDO A PÁGINA NÃO TEM MAIS OPÇÃO
+# ======================================================
+# 🔥 2026-09-25, pedido do usuário ("tem bastante ep ainda com 0%, ja
+# procurou mais opcoes p eles?"): Shinobi no Ittoki 06 e Shikimori-san 12
+# esgotaram as opções da página do DarkMahou, todas sem seeder, mas o
+# nyaa.si tinha Erai-raws com seeders. A busca (RSS, que já traz o número
+# de seeders) só roda quando a página não tem mais opção não tentada, e
+# só aceita o que manteria o padrão do MOIRAI: legendado em português
+# (POR-BR/PT-BR, ou "Multiple Subtitle" da Erai, que inclui POR-BR), mesma
+# temporada e episódio, com seeder, sem dublagem nem batch.
+_URL_RSS_NYAA = "https://nyaa.si/"
+_NS_NYAA = "{https://nyaa.si/xmlns/nyaa}"
+_PADRAO_LEGENDA_PT_BR = re.compile(r"POR-BR|PT-BR|Multiple Subtitle", re.IGNORECASE)
+_PADRAO_NYAA_DESCARTAR = re.compile(r"\bdub\b|\bdual[- ]audio\b|\bbatch\b|subtitles only", re.IGNORECASE)
+_SEGUNDOS_CACHE_NYAA = 600
+_cache_nyaa = {}
+
+
+def _normalizar_titulo_busca(texto):
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", sem_acento.lower()).strip()
+
+
+def _titulo_base_nyaa(titulo):
+    """Título do DarkMahou sem "Nª Temporada" (o nyaa escreve "2nd Season"/"S2")."""
+    return re.sub(r"\s*\d+ª?\s*Temporada\b", "", titulo, flags=re.IGNORECASE).strip(" -:")
+
+
+def _episodio_do_nome_nyaa(nome):
+    """Como _numero_episodio_no_nome_arquivo, aceitando o sufixo de versão ou
+    de fim ("- 12 END [1080p]", "- 05v2 [")."""
+    match = re.search(r"\bS\d{1,2}E(\d{1,4})\b", nome, re.IGNORECASE) or \
+        re.search(r"\s-\s*(\d{1,4})(?:v\d+)?(?:\s+END)?\s*[\[(]", nome, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _temporada_do_nome_nyaa(nome):
+    for padrao in (r"\bS(\d{1,2})E\d+", r"\b(\d+)(?:st|nd|rd|th)\s+Season\b", r"\bSeason\s+(\d+)\b", r"\bS(\d{1,2})\b"):
+        match = re.search(padrao, nome, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return 1
+
+
+def _buscar_nyaa(consulta):
+    """[(titulo, link .torrent, seeders)] da busca RSS do nyaa (categoria
+    anime legendado em inglês, onde a Erai publica); [] em falha. Cache de
+    10 min: a mesma busca roda pra cada checagem de travado."""
+    em_cache = _cache_nyaa.get(consulta)
+    if em_cache and time.time() - em_cache[0] < _SEGUNDOS_CACHE_NYAA:
+        return em_cache[1]
+    itens = []
+    try:
+        resp = _get_nyaa_com_espelho(_URL_RSS_NYAA, params={"page": "rss", "c": "1_2", "f": "0", "q": consulta})
+        for item in ElementTree.fromstring(resp.content).iter("item"):
+            itens.append((item.findtext("title", ""), item.findtext("link", ""),
+                          int(item.findtext(f"{_NS_NYAA}seeders", "0") or 0)))
+    except Exception as e:
+        print(f" [SISTEMA] Busca no nyaa.si falhou ({consulta}): {e}")
+    _cache_nyaa[consulta] = (time.time(), itens)
+    return itens
+
+
+def _opcoes_nyaa(registro, numero_episodio):
+    """Opções (rotulo, link, None) do nyaa pro episódio numerado; especial fica de fora."""
+    if _eh_especial(numero_episodio):
+        return []
+    titulo_base = _titulo_base_nyaa(registro["titulo"])
+    palavras = _normalizar_titulo_busca(titulo_base).split()
+    temporada = _detectar_numero_temporada(registro["titulo"])
+    opcoes = []
+    for nome, link, seeders in _buscar_nyaa(f"{_normalizar_titulo_busca(titulo_base)} {int(numero_episodio):02d}"):
+        nome_normalizado = _normalizar_titulo_busca(nome).split()
+        if (seeders < 1 or not link.endswith(".torrent") or _PADRAO_NYAA_DESCARTAR.search(nome)
+                or not _PADRAO_LEGENDA_PT_BR.search(nome)
+                or not all(p in nome_normalizado for p in palavras)
+                or _episodio_do_nome_nyaa(nome) != int(numero_episodio)
+                or _temporada_do_nome_nyaa(nome) != temporada):
+            continue
+        opcoes.append((f"nyaa ({seeders} seeders): {nome}", link, None))
+    return opcoes
+
+
+def _episodios_em_zips_yandex(soup):
+    """{numero: [(rotulo, link_sintético, None)]} de todos os blocos da página."""
+    episodios = {}
+    for bloco in soup.find_all("div", class_="soraddl"):
+        for numero, rotulo, link in _opcoes_zip_yandex_do_bloco(bloco):
+            episodios.setdefault(numero, []).append((rotulo, link, None))
+    return episodios
+
+
+# ======================================================
 # ✨ EPISÓDIO ESPECIAL (bloco "Episódio Especial", sem número)
 # ======================================================
 # 🔥 2026-09-24, pedido do usuário (caso real Kawaii dake ja Nai
@@ -889,8 +1125,11 @@ def _hash_da_opcao(link):
 # `registro["especiais"][K]` = {"apos": N, "status": ...} - FORA de
 # `episodios`, cujas chaves a GAIA/IRIS convertem com int(). O nome final
 # usa a posição: "Título - S01E06.5 - Especial 1.mkv".
+# 🔥 2026-09-25, pedido do usuário ("pode tratar ep 0 como especial", caso
+# real Boku no Kokoro no Yabai Yatsu 2ª Temporada): "Episódio 00" também é
+# especial, antes do 1 ("S02E00.5 - Especial 1"), fora da contagem numerada.
 _PREFIXO_ESPECIAL = "especial-"
-_PADRAO_BLOCO_ESPECIAL = re.compile(rf"^{_PALAVRA_EPISODIO}\s+Especial\b", re.IGNORECASE)
+_PADRAO_BLOCO_ESPECIAL = re.compile(rf"^{_PALAVRA_EPISODIO}\s+(?:Especial|0+)\b", re.IGNORECASE)
 _PADRAO_NOME_ESPECIAL = re.compile(r" - (?:S\d+)?E\d+\.5 - Especial \d+")
 
 
@@ -1032,7 +1271,7 @@ def _extrair_opcoes_download(url_anime, numero_episodio):
         texto_bloco = titulo_bloco.get_text(strip=True)
         primeira_linha = bloco.find("tr")
         links_magnet = primeira_linha.find_all("a", href=_PADRAO_LINK_DOWNLOAD) if primeira_linha else []
-        if padrao_alvo.match(texto_bloco):
+        if padrao_alvo.match(texto_bloco) or (int(numero_episodio) == 1 and _PADRAO_BLOCO_FILME.match(texto_bloco)):
             if not achou_avulso:
                 achou_avulso = True
                 avulsas = [(a.get_text(strip=True), a["href"], None) for a in links_magnet]
@@ -1044,6 +1283,8 @@ def _extrair_opcoes_download(url_anime, numero_episodio):
             rotulo = f"{a.get_text(strip=True)} ({texto_bloco})"
             if _opcao_sem_censura(rotulo, a["href"]):
                 lotes.append((rotulo, a["href"], lote))
+    if not avulsas and not lotes:
+        return _episodios_em_zips_yandex(soup).get(int(numero_episodio), [])
     return avulsas + lotes
 
 
@@ -1204,6 +1445,28 @@ def _adicionar_torrent(cliente, link, pasta_destino, parar_no_metadado=False):
     cliente.torrents_add(save_path=pasta_destino, category=CATEGORIA_QBITTORRENT, **extra)
 
 
+def _opcoes_nao_tentadas(registro, numero_episodio, excluir=()):
+    """(total de opções na página, opções ainda utilizáveis). 🔥 2026-09-24:
+    magnet já tentado e dado como travado (_tratar_downloads_travados) fica
+    de fora - senão o mesmo torrent morto seria escolhido de novo - e
+    .torrent que não baixa (removido do nyaa.si) não é opção. `excluir`:
+    hashes a mais (o torrent travado que ainda está no qBittorrent). Sem
+    opção utilizável na página, entra a busca no nyaa (_opcoes_nyaa)."""
+    tentados = set(registro.get("episodios_magnets_tentados", {}).get(str(numero_episodio), [])) | set(excluir)
+
+    def _utilizaveis(opcoes):
+        return [o for o in opcoes
+                if (o[1].startswith("magnet:") or _obter_torrent(o[1]) is not None)
+                and _hash_da_opcao(o[1]) not in tentados]
+
+    opcoes = _extrair_opcoes_download(registro["url"], numero_episodio)
+    utilizaveis = _utilizaveis(opcoes)
+    if not utilizaveis:
+        extras = _opcoes_nyaa(registro, numero_episodio)
+        opcoes, utilizaveis = opcoes + extras, _utilizaveis(extras)
+    return len(opcoes), utilizaveis
+
+
 def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False):
     """Extrai o magnet do episódio (sem censura e 1080p HEVC de preferência) e manda pro
     qBittorrent - `save_path` é a pasta de downloads configurada no Painel
@@ -1228,16 +1491,7 @@ def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False
     if str(numero_episodio) in registro.get("downloads_em_andamento", {}):
         return False
 
-    opcoes = _extrair_opcoes_download(registro["url"], numero_episodio)
-    # 🔥 2026-09-24: magnet já tentado e dado como travado
-    # (_tratar_downloads_travados) fica de fora - senão o mesmo torrent morto
-    # seria escolhido de novo.
-    tentados = set(registro.get("episodios_magnets_tentados", {}).get(str(numero_episodio), []))
-    total_opcoes = len(opcoes)
-    # .torrent que não baixa (removido do nyaa.si) não é opção.
-    opcoes = [o for o in opcoes
-              if _hash_da_opcao(o[1]) not in tentados
-              and (o[1].startswith("magnet:") or _obter_torrent(o[1]) is not None)]
+    total_opcoes, opcoes = _opcoes_nao_tentadas(registro, numero_episodio)
     rotulo_ep = _rotulo_episodio(registro, numero_episodio)
     magnet = _escolher_melhor_magnet(opcoes, None if _eh_especial(numero_episodio) else numero_episodio)
     escolhida = next((o for o in opcoes if o[1] == magnet), None)
@@ -1588,6 +1842,19 @@ def baixar_pendentes_de(chave):
     return disparados
 
 
+def baixar_pendentes_com_aviso(chave):
+    """baixar_pendentes_de + o aviso de avisar_download_manual - usado pela
+    ponte HTTP (`/anime/baixar_pendentes`), que o Painel/`/adicionar_anime`
+    chamam logo depois de adicionar um anime por link."""
+    if not qbittorrent_configurado():
+        return 0, _AVISO_SEM_QBITTORRENT
+    registro = _carregar_animes().get(chave)
+    if not registro or registro.get("interesse") != "tenho_interesse":
+        return 0, None
+    disparados, _numeros, falhos = _baixar_pendentes_do_registro(chave, registro)
+    return disparados, avisar_download_manual(chave, disparados, falhos)
+
+
 def baixar_episodios_selecionados(chave, numeros):
     """Baixa só os números de episódio EXPLICITAMENTE escolhidos (2026-08-07,
     modal de seleção ao adicionar um anime manualmente por link - Assistente de
@@ -1601,11 +1868,77 @@ def baixar_episodios_selecionados(chave, numeros):
     registro = _carregar_animes().get(chave)
     if not registro or registro.get("interesse") != "tenho_interesse":
         return 0
-    disparados = 0
+    return baixar_episodios_selecionados_com_aviso(chave, numeros)[0]
+
+
+def baixar_episodios_selecionados_com_aviso(chave, numeros):
+    """baixar_episodios_selecionados + o aviso de avisar_download_manual."""
+    if not qbittorrent_configurado():
+        return 0, _AVISO_SEM_QBITTORRENT
+    registro = _carregar_animes().get(chave)
+    if not registro or registro.get("interesse") != "tenho_interesse":
+        return 0, None
+    disparados, falhos = 0, []
     for numero_episodio in numeros:
         if baixar_episodio(chave, registro, numero_episodio):
             disparados += 1
-    return disparados
+        else:
+            falhos.append(numero_episodio)
+    return disparados, avisar_download_manual(chave, disparados, falhos)
+
+
+# ======================================================
+# 💬 AVISO DO DOWNLOAD MANUAL (adicionar por link)
+# ======================================================
+# 🔥 2026-09-25, pedido do usuário ("moirai podia mandar um aviso qnd eu
+# tento baixar um anime manualmente passando link, msm qnd n encontra nada",
+# caso real Boku no Kokoro no Yabai Yatsu 2ª Temporada): a página só tinha
+# "Episódio 00" e um bloco "Temporada Completa" com Yandex/Jottacloud - o
+# Painel não mostrava nada e o usuário não sabia o motivo.
+_AVISO_SEM_QBITTORRENT = "O qBittorrent não está configurado no MOIRAI - nada foi mandado pra baixar."
+
+
+def _blocos_so_link_direto(soup):
+    """Títulos dos blocos da página que têm link de download, mas nenhum
+    magnet/.torrent (Google Drive, sync.com...) nem zip de .torrent no
+    Yandex - o MOIRAI não consegue baixar por eles."""
+    titulos = []
+    for bloco in soup.find_all("div", class_="soraddl"):
+        titulo = bloco.find("h3")
+        links = [a["href"] for a in bloco.find_all("a", href=True) if not a["href"].startswith("#")]
+        if (titulo and links and not any(_PADRAO_LINK_DOWNLOAD.search(h) for h in links)
+                and not _opcoes_zip_yandex_do_bloco(bloco)):
+            titulos.append(titulo.get_text(strip=True))
+    return titulos
+
+
+def avisar_download_manual(chave, disparados, falhos):
+    """Texto explicando o que ficou de fora de um download pedido à mão, ou
+    None se tudo que a página oferece foi mandado pro qBittorrent. `falhos`:
+    episódios tentados sem sucesso (sem magnet, erro no qBittorrent)."""
+    registro = _carregar_animes().get(chave)
+    if not registro:
+        return None
+    avisos = []
+    if falhos:
+        rotulos = ", ".join(_rotulo_episodio(registro, f) for f in falhos)
+        avisos.append(f"Não consegui baixar o(s) episódio(s) {rotulos} (sem magnet/torrent utilizável na página, ou erro no qBittorrent - detalhe no log do MOIRAI).")
+    try:
+        blocos_diretos = _blocos_so_link_direto(BeautifulSoup(_obter_html_darkmahou(registro["url"]), "html.parser"))
+    except Exception:
+        blocos_diretos = []
+    if blocos_diretos:
+        avisos.append(
+            "A página só tem link de download direto (sem magnet/torrent) em: "
+            + "; ".join(f"\"{t}\"" for t in blocos_diretos)
+            + ". O MOIRAI só baixa por magnet/torrent - esse precisa ser baixado à mão."
+        )
+    if not disparados and not falhos:
+        if registro.get("ultimo_episodio_visto") is None and not registro.get("pacote_completo") and not registro.get("especiais"):
+            avisos.insert(0, "Não achei nenhum episódio com magnet/torrent na página do anime.")
+        else:
+            avisos.insert(0, "Nada novo pra baixar - os episódios da página já foram baixados antes ou estão baixando.")
+    return "\n".join(avisos) or None
 
 
 def _maior_arquivo_video(caminho):
@@ -1730,6 +2063,7 @@ def verificar_downloads_em_andamento():
     mudou = _aplicar_selecao_lotes(cliente, animes) or mudou
     travados = []
     limite_travado = timedelta(hours=obter_anime_download_travado_horas())
+    limite_sem_seed = min(limite_travado, timedelta(hours=_HORAS_TRAVADO_SEM_SEED))
     for chave, numero_episodio_str, info in pendentes:
         registro = animes[chave]
         status_atual = _status_episodio(registro, numero_episodio_str)
@@ -1762,7 +2096,8 @@ def verificar_downloads_em_andamento():
                 info["progresso_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
                 info.setdefault("progresso", progresso or 0.0)
                 mudou = True
-            elif datetime.now() - datetime.strptime(info["progresso_em"], "%Y-%m-%d %H:%M") >= limite_travado:
+            elif datetime.now() - datetime.strptime(info["progresso_em"], "%Y-%m-%d %H:%M") >= (
+                    limite_sem_seed if torrents and getattr(torrents[0], "num_seeds", None) == 0 else limite_travado):
                 travados.append((chave, numero_episodio_str, info["hash"], progresso))
             continue
 
@@ -1865,6 +2200,7 @@ def verificar_downloads_em_andamento():
             _definir_status_episodio(registro, numero_episodio_str, "baixado")
         registro.setdefault("episodios_baixado_em", {})[numero_episodio_str] = agora
         registro.get("downloads_em_andamento", {}).pop(numero_episodio_str, None)
+        registro.get("episodios_falha_download", {}).pop(numero_episodio_str, None)  # travado sem alternativa que terminou
         concluidos += 1
         mudou = True
         print(f" [SISTEMA] 🎬 Download concluído: {registro['titulo']} Episódio {_rotulo_episodio(registro, numero_episodio_str)}.")
@@ -1993,7 +2329,21 @@ def _tratar_downloads_travados(cliente, travados):
         if not registro or numero_episodio_str not in registro.get("downloads_em_andamento", {}):
             continue
         porcentagem = f"{progresso * 100:.0f}%" if progresso is not None else "fora do qBittorrent"
-        print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: download travado ({porcentagem}) - tentando outro magnet.")
+        rotulo_ep = _rotulo_episodio(registro, numero_episodio_str)
+        ident = numero_episodio_str if _eh_especial(numero_episodio_str) else int(numero_episodio_str)
+        if progresso is not None and not _opcoes_nao_tentadas(registro, ident, excluir=[hash_torrent])[1]:
+            # 🔥 2026-09-25: sem outra opção na página, tirar o torrent só
+            # piorava - some qualquer chance de um seeder aparecer. Fica no
+            # qBittorrent, a contagem recomeça e a falha vira alerta.
+            info = registro["downloads_em_andamento"][numero_episodio_str]
+            info["progresso_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            if not info.get("sem_alternativa"):
+                info["sem_alternativa"] = True
+                print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {rotulo_ep}: download travado ({porcentagem}) e sem outra opção na página - mantido no qBittorrent.")
+            _salvar_animes(animes)
+            _registrar_falha_download(chave, numero_episodio_str, f"download travado em {porcentagem}, sem outra opção na página")
+            continue
+        print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {rotulo_ep}: download travado ({porcentagem}) - tentando outro magnet.")
         registro["downloads_em_andamento"].pop(numero_episodio_str, None)
         if not _hash_ainda_acompanhado(animes, hash_torrent):
             try:
@@ -2007,7 +2357,7 @@ def _tratar_downloads_travados(cliente, travados):
             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}: {hash_torrent} parado em {porcentagem}"
         )
         _salvar_animes(animes)
-        baixar_episodio(chave, registro, numero_episodio_str if _eh_especial(numero_episodio_str) else int(numero_episodio_str))
+        baixar_episodio(chave, registro, ident)
 
 
 # ======================================================
@@ -2083,12 +2433,26 @@ def _titulo_do_nome_arquivo(nome):
     return nome[:match.start()] if match else None
 
 
+def anime_ja_iniciado(registro):
+    """True se o usuário já começou a ver: algum episódio "assistido" ou
+    progresso no MAL. 🔥 2026-09-25, pedido do usuário: anime que ele está
+    assistindo continua na pasta de downloads mesmo finalizado ("so é para
+    mandar animes q nem comecei a ver" - caso real Grand Blue 3ª Temporada,
+    movido com 7 episódios já assistidos)."""
+    return (any(status == "assistido" for status in registro.get("episodios", {}).values())
+            or (registro.get("mal_ultimo_progresso_sincronizado") or 0) > 0)
+
+
 def organizar_animes_finalizados():
-    """Move os episódios de anime finalizado da raiz da pasta de downloads
-    para a pasta própria do anime. Chamada pelo loop de downloads (main.py).
-    Anime com download em andamento ou pacote aguardando fica para depois:
-    o arquivo de um lote continua no torrent até o último episódio, e mover
-    antes faria o qBittorrent perder o arquivo. Nunca sobrescreve: se o
+    """Move os episódios de anime finalizado que o usuário ainda não começou
+    a ver (anime_ja_iniciado) da raiz da pasta de downloads para a pasta
+    própria do anime. Chamada pelo loop de downloads (main.py).
+    Anime com lote em andamento ou pacote aguardando fica para depois: o
+    arquivo de um lote continua no torrent até o último episódio, e mover
+    antes faria o qBittorrent perder o arquivo. Episódio avulso baixando não
+    segura os outros (🔥 2026-09-25: o especial sem seeder de Boku no Kokoro
+    no Yabai Yatsu 2 prendia os 13 episódios prontos) - o arquivo dele ainda
+    tem o nome do fansub e não casa com o título. Nunca sobrescreve: se o
     destino já existe, o arquivo fica onde está. Devolve quantos moveu."""
     pasta_downloads = obter_anime_pasta_downloads()
     pasta_assistidos = obter_anime_pasta_assistidos()
@@ -2097,7 +2461,8 @@ def organizar_animes_finalizados():
     animes = _carregar_animes()
     chave_por_titulo = {
         _sanitizar_nome_arquivo(r["titulo"]): c for c, r in animes.items()
-        if r.get("interesse") == "tenho_interesse" and not r.get("downloads_em_andamento")
+        if r.get("interesse") == "tenho_interesse" and not anime_ja_iniciado(r)
+        and not any(i.get("lote") for i in r.get("downloads_em_andamento", {}).values())
         and not r.get("pacote_completo", {}).get("aguardando_arquivos") and anime_ja_finalizado(r)
     }
     if not chave_por_titulo:
@@ -3477,7 +3842,9 @@ def _coletar_alertas_falha_persistente():
     for registro in animes.values():
         if registro.get("interesse") != "tenho_interesse":
             continue
-        for numero, falha in sorted(registro.get("episodios_falha_download", {}).items(), key=lambda par: int(par[0])):
+        # Especial ("especial-1") depois dos numerados - int() direto quebrava a coleta inteira.
+        falhas = registro.get("episodios_falha_download", {}).items()
+        for numero, falha in sorted(falhas, key=lambda par: (not par[0].isdigit(), int(par[0]) if par[0].isdigit() else par[0])):
             if falha.get("alertado"):
                 continue
             try:
@@ -3486,7 +3853,7 @@ def _coletar_alertas_falha_persistente():
                 continue
             if agora - desde >= limite:
                 horas = int((agora - desde).total_seconds() // 3600)
-                alertas.append(f"{registro['titulo']} Episódio {numero} falha há {horas}h ({falha.get('motivo') or 'motivo desconhecido'}).")
+                alertas.append(f"{registro['titulo']} Episódio {_rotulo_episodio(registro, numero)} falha há {horas}h ({falha.get('motivo') or 'motivo desconhecido'}).")
                 falha["alertado"] = True
                 mudou = True
     if mudou:

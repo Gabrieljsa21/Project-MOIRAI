@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from moirai import runtime_log
 from moirai.core import anime_tracker as at
 
+at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+
 HASH_A, HASH_B = "a" * 40, "b" * 40
 URL = "https://darkmahou.io/anime/teste/"
 
@@ -85,6 +87,42 @@ def testar_travado_sem_alternativa_registra_falha():
     salvo = at._carregar_animes()["teste"]
     assert salvo["downloads_em_andamento"] == {}
     assert salvo["episodios_falha_download"]["8"]["motivo"] == "todos os magnets disponíveis já travaram"
+
+
+def testar_sem_seed_troca_em_2h_com_seed_espera_24h():
+    tres_horas = (datetime.datetime.now() - datetime.timedelta(hours=3)).strftime("%Y-%m-%d %H:%M")
+    at._extrair_opcoes_download = lambda url, n: [
+        ("1080p HEVC", f"magnet:?xt=urn:btih:{HASH_A}"), ("1080p", f"magnet:?xt=urn:btih:{HASH_B}")]
+    for seeds, troca in ((0, True), (1, False)):
+        _preparar({"teste": _registro(downloads_em_andamento={
+            "8": {"hash": HASH_A, "pasta": "x", "progresso": 0.0, "progresso_em": tres_horas}})})
+        cliente = _ClienteFalso(torrents={HASH_A: SimpleNamespace(progress=0.0, num_seeds=seeds, content_path="")})
+        at._cliente_qbittorrent = lambda: cliente
+        at.verificar_downloads_em_andamento()
+        assert (cliente.adicionados == [HASH_B]) is troca, (seeds, cliente.adicionados)
+
+
+def testar_travado_sem_alternativa_fica_no_qbittorrent():
+    antigo = (datetime.datetime.now() - datetime.timedelta(hours=30)).strftime("%Y-%m-%d %H:%M")
+    _preparar({"teste": _registro(downloads_em_andamento={
+        "especial-1": {"hash": HASH_A, "pasta": "x", "progresso": 0.0, "progresso_em": antigo}},
+        especiais={"1": {"apos": 0}})})
+    cliente = _ClienteFalso(torrents={HASH_A: SimpleNamespace(progress=0.0, num_seeds=0, content_path="")})
+    at._cliente_qbittorrent = lambda: cliente
+    at._extrair_opcoes_download = lambda url, n: [("1080p HEVC", f"magnet:?xt=urn:btih:{HASH_A}")]
+    at.verificar_downloads_em_andamento()
+    salvo = at._carregar_animes()["teste"]
+    info = salvo["downloads_em_andamento"]["especial-1"]
+    assert cliente.removidos == [] and cliente.adicionados == []
+    assert info["sem_alternativa"] is True and info["progresso_em"] != antigo
+    assert "sem outra opção" in salvo["episodios_falha_download"]["especial-1"]["motivo"]
+    # Alerta de especial: antes int("especial-1") quebrava a coleta inteira.
+    muito_antigo = (datetime.datetime.now() - datetime.timedelta(hours=100)).strftime("%Y-%m-%d %H:%M")
+    salvo["episodios_falha_download"]["especial-1"]["desde"] = muito_antigo
+    salvo["episodios_falha_download"]["9"] = {"desde": muito_antigo, "motivo": "x", "alertado": False}
+    at._salvar_animes({"teste": salvo})
+    alertas = at._coletar_alertas_falha_persistente()
+    assert len(alertas) == 2 and "Episódio 9 " in alertas[0] and "0.5 - Especial 1" in alertas[1], alertas
 
 
 def testar_progresso_renova_o_prazo():
@@ -228,6 +266,8 @@ def testar_checagem_autonoma_so_roda_com_gaia_fechada_e_intervalo_vencido():
 if __name__ == "__main__":
     testar_download_travado_troca_para_o_proximo_magnet()
     testar_travado_sem_alternativa_registra_falha()
+    testar_sem_seed_troca_em_2h_com_seed_espera_24h()
+    testar_travado_sem_alternativa_fica_no_qbittorrent()
     testar_progresso_renova_o_prazo()
     testar_numeracao_absoluta_aceita_quando_arquivo_pertence_ao_torrent()
     testar_divergencia_fora_do_torrent_continua_travada_e_avisa_uma_vez()

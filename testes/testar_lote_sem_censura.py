@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moirai.core import anime_tracker as at
 
+at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+
 URL = "https://darkmahou.io/anime/teste/"
 HASH_LOTE, HASH_JUDAS = "d" * 40, "e" * 40
 MAGNET_LOTE = f"magnet:?xt=urn:btih:{HASH_LOTE}&dn=%5BWF%5D%20Teste%20%2801-04%29%20%5BUNCENSORED%5D"

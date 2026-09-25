@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moirai.core import anime_tracker as at
 
+at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+
 URL = "https://darkmahou.io/anime/100-nin/"
 HASH = "9" * 40
 MAGNET = f"magnet:?xt=urn:btih:{HASH}&dn=%5BDKB%5D%20Anime%20100-nin%20-%20%28Season%2001%29%20%5BBatch%5D"

@@ -11,11 +11,13 @@ from bs4 import BeautifulSoup
 
 from moirai.core import anime_tracker as at
 
+at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+
 
 def testar_numero_do_bloco():
     casos = {
         "Episódio 12 Final": 12, "Epi8ódio 18": 18, "Episodio 3": 3, "Episódio 07": 7,
-        "Episódios 01~04 Sem Censura": None, "Episódio Especial": None,
+        "Episódios 01~04 Sem Censura": None, "Episódio Especial": None, "Episódio 00": None, "Filme Completo Legendado Torrent": 1,
         "Kimi no Koto ga Daidaidaidaidaisuki na 100-nin no Kanojo": None,
         "2ª Temporada BD Completo Legendado Torrent": None,
     }

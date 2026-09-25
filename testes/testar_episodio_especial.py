@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moirai.core import anime_tracker as at
 
+at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+
 URL = "https://darkmahou.io/anime/especial/"
 HASH_SP, HASH_E07 = "f" * 40, "1" * 40
 MAGNET_SP = f"magnet:?xt=urn:btih:{HASH_SP}&dn=%5BErai-raws%5D%20Anime%20-%20SP1%20%5B1080p%5D.mkv"

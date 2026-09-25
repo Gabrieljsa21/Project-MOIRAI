@@ -442,6 +442,131 @@ estação: 1-Inverno (jan-mar), 2-Primavera (abr-jun), 3-Verão (jul-set),
   rebaixa "assistido". `obter_primeiro_episodio_baixado` também procura
   nessas pastas.
 
+## Aviso do download manual e episódio 0 (2026-09-25)
+
+Pedido do usuário: o adicionar-por-link precisa avisar o resultado, mesmo
+quando nada baixa. Caso real: Boku no Kokoro no Yabai Yatsu 2ª Temporada,
+cuja página tinha só "Episódio 00" (magnet) e "1ª Temporada Completa
+Legendado Torrent" (apesar do nome, só Yandex/Jottacloud).
+
+- **Por que ficava mudo.** `ultimo_episodio_visto` virava 0, o backfill de
+  `_episodios_a_baixar` começava do 1 (`range(1, 1)` vazio) e o Painel da
+  GAIA tratava `0` como "último desconhecido" (`not ultimo`), caindo no
+  download direto com callback vazio. O pacote também não entrava:
+  `_opcoes_pacote_completo` só vale para página sem nenhum "Episódio N", e o
+  bloco não tinha magnet/.torrent.
+- **Episódio 0 como especial** (pedido do usuário). `_PADRAO_BLOCO_ESPECIAL`
+  aceita "Episódio 0+" além de "Episódio Especial", e `_numero_do_bloco`
+  devolve None para qualquer bloco especial. Assim o 0 sai da contagem
+  numerada (não vira `ultimo_episodio_visto = 0`) e entra no fluxo de
+  especial já existente, com `apos = 0`: `Título - S02E00.5 - Especial 1.mkv`.
+  Uma página só com o 0 fica sem `ultimo_episodio_visto`, então o Painel
+  pula o modal de seleção e baixa os pendentes direto.
+- **Aviso.** `avisar_download_manual(chave, disparados, falhos)` junta:
+  episódios tentados sem sucesso, blocos com link mas sem magnet/.torrent
+  (`_blocos_so_link_direto`, página vinda do cache de 2 min) e, sem nada
+  disparado, "nenhum episódio na página" ou "nada novo". As duas rotas de
+  download da ponte devolvem `{"disparados", "aviso"}`; cliente antigo
+  (IRIS) ignora o campo extra. O loop automático não usa o aviso.
+- **Zip de .torrent no Yandex** (pedido do usuário no mesmo dia). O zip do
+  bloco "Temporada Completa" tinha 13 `.torrent`, um por episódio, e não
+  vídeo. `_torrents_do_zip_yandex(url)` usa a API pública do Yandex Disk
+  (metadado com o link `file` de download; só `type == "file"`, `.zip` e até
+  `_TAMANHO_MAX_ZIP_YANDEX`) e guarda `{nome: bytes}` no mesmo esquema de
+  cache de `_obter_torrent`. Cada `.torrent` com número no nome
+  (`_numero_episodio_no_nome_arquivo`) vira opção `(rótulo, "yandex-zip:<url>#<arquivo>", None)`;
+  como hash, nome e envio ao qBittorrent já passam por `_obter_torrent`,
+  bastou ele resolver o prefixo, sem caminho novo de download. Entra em
+  `_ultimo_episodio_da_pagina` e, só quando o episódio não tem avulso nem
+  lote, em `_extrair_opcoes_download`. Fora do escopo: zip com senha
+  (o "Senha" da página não era necessário neste caso), pasta do Yandex e
+  Jottacloud.
+- **Filme = episódio 1** (mesmo dia). Página de filme tem um bloco só,
+  "Filme Completo Legendado Torrent". Sem número, ela caía em
+  `_opcoes_pacote_completo`, e `_expandir_pacotes_completos` descartava o
+  torrent (vídeo sem número no nome). `_numero_do_bloco` devolve 1 para
+  bloco "Filme ...", e `_extrair_opcoes_download(url, 1)` aceita esse
+  bloco, então o filme segue o fluxo de episódio avulso (sem parar no
+  metadado). `registro["filme"]` só existe para a GAIA pular o modal de
+  seleção. O nome fica `Título - S01E01.mkv` de propósito: é o padrão que
+  `_PADRAO_NOME_ARQUIVO`, a sincronização da biblioteca e a organização
+  por temporada já reconhecem.
+
+## Troca rápida de torrent sem seeder (2026-09-25)
+
+Pedido do usuário: vários animes pareciam que nunca iam baixar. No
+qBittorrent, 22 episódios estavam parados desde 24/09 com 0 seeders
+conectados, e todos (menos o especial de Boku no Kokoro no Yabai Yatsu 2)
+tinham opção ainda não tentada na página (720p, outro fansub, lote).
+
+- **Dois prazos.** `verificar_downloads_em_andamento` usa
+  `_HORAS_TRAVADO_SEM_SEED` (2h) quando o torrent tem `num_seeds == 0`, e
+  `anime_download_travado_horas` (24h) quando há seeder conectado, só
+  lento. Com uma opção de 24h por vez, 3 opções mortas levavam 3 dias. É
+  constante, e não configuração nova, porque 2h sem nenhum seeder já é
+  sinal claro de swarm morto.
+- **Sem alternativa, o torrent fica.** `_tratar_downloads_travados`
+  consulta `_opcoes_nao_tentadas` (extraída de `baixar_episodio`, mesma
+  regra de magnets tentados e `.torrent` indisponível) antes de remover.
+  Sem outra opção, o torrent continua no qBittorrent (um seeder pode
+  aparecer), `progresso_em` recomeça (a página não é consultada a cada
+  30s) e a falha entra em `episodios_falha_download` para o alerta de 48h.
+  A conclusão do download limpa essa falha. Torrent que sumiu do
+  qBittorrent segue o comportamento antigo.
+- **Bug corrigido junto.** `_coletar_alertas_falha_persistente` ordenava
+  com `int(numero)` e quebrava a coleta inteira com um especial
+  (`especial-1`) em falha; agora ordena numerados primeiro e mostra o
+  rótulo do especial ("0.5 - Especial 1").
+- **Reserva no nyaa.si** (mesmo dia, "ja procurou mais opcoes p eles?").
+  `_opcoes_nao_tentadas` chama `_opcoes_nyaa` só quando nenhuma opção da
+  página é utilizável, então o comportamento de anime com página saudável
+  não muda. A busca usa o RSS (`?page=rss&c=1_2`), que traz `nyaa:seeders`
+  sem abrir cada torrent, com cache de 10 min. Filtros, todos pelo nome:
+  seeder >= 1; `_PADRAO_LEGENDA_PT_BR` (o MOIRAI sempre baixou legendado
+  em português, e a SubsPlease é só inglês); nada de dub/dual audio/batch;
+  todas as palavras do título sem "Nª Temporada"; `_episodio_do_nome_nyaa`
+  igual ao pedido (aceita "12 END" e "05v2"); `_temporada_do_nome_nyaa`
+  igual à do título. Especial fica de fora, porque não há número para
+  buscar. Título do DarkMahou em inglês ou diferente do romaji do nyaa
+  (Yani Neko é "Chainsmoker Cat" nos fansubs) simplesmente não acha nada.
+- **Espelho nyaa.land** (mesmo dia, 15h18). O nyaa.si parou de responder
+  bem na troca dos travados; cada `.torrent` esperava 20s e o MOIRAI
+  concluía "sem outra opção", reiniciando o prazo de 2h. `_get_nyaa_com_espelho`
+  cai para o nyaa.land em erro de rede (404 de verdade não), e marca o
+  nyaa.si como fora por 10 min para não pagar o timeout de novo. O RSS do
+  espelho fica atrás do desafio do Cloudflare, então a busca só funciona
+  pelo nyaa.si. Em `_obter_torrent`, falha de rede fica em cache 5 min, e
+  não 1h como torrent removido.
+
+## Anime finalizado: status do site e total do MAL (2026-09-25)
+
+Pedido do usuário: animes que ele sabia completos não iam para a pasta.
+Diagnóstico: 20 títulos do Verão 2026 com 12 de 12 episódios estavam na
+raiz, porque `anime_ja_finalizado` nunca aceitava a temporada atual. E a
+2ª temporada de Boku no Kokoro no Yabai Yatsu ficava presa pelo especial
+sem seeder em `downloads_em_andamento`.
+
+- **Sinais de finalizado, em ordem:** `registro["filme"]`;
+  `status_site == "Completed"` (campo "Status:" da página, `_status_da_pagina`,
+  lido em `adicionar_anime_manual` e em `_atualizar_lancamentos_fora_da_home`);
+  total do MAL atingido em qualquer temporada; estreia 2 temporadas atrás.
+  Re:Zero 4 (18 de 19, "Ongoing") continua de fora. Metade dos casos reais
+  não tinha `mal_num_episodios`, por isso o status do site.
+- **O que segura a mudança de pasta:** só lote em andamento ou pacote
+  aguardando metadado, porque o arquivo renomeado de um lote ainda pertence
+  ao torrent. Episódio avulso em andamento ainda tem o nome do fansub e não
+  casa com `_titulo_do_nome_arquivo`; o torrent de episódio avulso concluído
+  já saiu do qBittorrent.
+- `_precisa_consultar_pagina` pula anime "Completed", como já pulava quem
+  atingiu o total do MAL.
+- **Só anime não iniciado muda de pasta** (ajuste do usuário no mesmo
+  dia). A pasta da temporada é para o que ele ainda não começou; o que está
+  assistindo fica na raiz, como Re:Zero 4. `anime_ja_iniciado` olha
+  episódio "assistido" no MOIRAI ou `mal_ultimo_progresso_sincronizado > 0`
+  (o usuário também assiste por fora e o MAL registra). Anime que ele
+  começar depois de movido continua na pasta: o arquivo já está lá, e
+  voltar sozinho seria confuso.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
