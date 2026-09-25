@@ -143,11 +143,12 @@ class _API(BaseHTTPRequestHandler):
             self._responder_json({"chave": chave, "erro": erro})
         elif caminho == "/anime/baixar_pendentes":
             chave = _ler_corpo_json(self).get("chave", "")
-            self._responder_json({"disparados": anime_tracker.baixar_pendentes_de(chave)})
+            disparados, aviso = anime_tracker.baixar_pendentes_com_aviso(chave)
+            self._responder_json({"disparados": disparados, "aviso": aviso})
         elif caminho == "/anime/baixar_episodios_selecionados":
             corpo = _ler_corpo_json(self)
-            disparados = anime_tracker.baixar_episodios_selecionados(corpo.get("chave", ""), corpo.get("numeros", []))
-            self._responder_json({"disparados": disparados})
+            disparados, aviso = anime_tracker.baixar_episodios_selecionados_com_aviso(corpo.get("chave", ""), corpo.get("numeros", []))
+            self._responder_json({"disparados": disparados, "aviso": aviso})
         elif caminho == "/anime/marcar_interesse":
             corpo = _ler_corpo_json(self)
             anime_tracker.marcar_interesse(corpo.get("chave", ""), corpo.get("interesse", ""))

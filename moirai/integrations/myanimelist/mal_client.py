@@ -235,8 +235,14 @@ def buscar_anime(titulo):
     Bad Request acima disso (títulos longos de isekai/light novel batem nesse
     limite com frequência), e mesmo truncado o resultado ainda cobre o anime
     certo (confirmado real: título de 89 caracteres cortado em 64 já trouxe o
-    match exato como 1º resultado)."""
-    dados, erro = _chamar_api("GET", "/anime", params={"q": titulo[:_LIMITE_CARACTERES_BUSCA_MAL], "limit": 10, "fields": "num_episodes"})
+    match exato como 1º resultado).
+
+    🔥 `nsfw=true` (2026-09-25, caso real Shinobi no Ittoki, id 51098): sem
+    ele a API do MAL omite da busca qualquer anime com classificação
+    sensível, devolvendo lista vazia sem erro - por isso vários animes
+    rastreados ficavam sem `mal_num_episodios`."""
+    dados, erro = _chamar_api("GET", "/anime", params={
+        "q": titulo[:_LIMITE_CARACTERES_BUSCA_MAL], "limit": 10, "fields": "num_episodes", "nsfw": "true"})
     if erro:
         return [], erro
     return [{"id": item["node"]["id"], "title": item["node"]["title"], "num_episodes": item["node"].get("num_episodes", 0)} for item in dados.get("data", [])], None

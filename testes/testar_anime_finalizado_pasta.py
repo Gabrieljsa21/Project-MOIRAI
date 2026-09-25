@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moirai.core import anime_tracker as at
 
+at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+
 _NOME_PASTA_TEMPORADA_REAL = at.nome_pasta_temporada
 
 
@@ -45,11 +47,22 @@ def testar_classificacao_de_finalizado():
     at.obter_temporada_atual = lambda: "Verão 2026"
     assert at.anime_ja_finalizado({"temporada_estreia": "Outono 2022"})
     assert at.anime_ja_finalizado({"temporada_estreia": "Inverno 2026"})
-    assert not at.anime_ja_finalizado({"temporada_estreia": "Verão 2026", "mal_num_episodios": 12, "ultimo_episodio_visto": 12})
+    # 2026-09-25: total do MAL vale em qualquer temporada, e "Completed" do site / filme também contam.
+    assert at.anime_ja_finalizado({"temporada_estreia": "Verão 2026", "mal_num_episodios": 12, "ultimo_episodio_visto": 12})
+    assert at.anime_ja_finalizado({"temporada_estreia": "Verão 2026", "status_site": "Completed"})
+    assert at.anime_ja_finalizado({"temporada_estreia": None, "filme": True})
+    assert not at.anime_ja_finalizado({"temporada_estreia": "Verão 2026", "status_site": "Ongoing", "ultimo_episodio_visto": 12})
     assert at.anime_ja_finalizado({"temporada_estreia": "Primavera 2026", "mal_num_episodios": 12, "ultimo_episodio_visto": 12})
     assert not at.anime_ja_finalizado({"temporada_estreia": "Primavera 2026", "mal_num_episodios": 19, "ultimo_episodio_visto": 18})
     assert not at.anime_ja_finalizado({"temporada_estreia": "Primavera 2026"})
     assert not at.anime_ja_finalizado({"temporada_estreia": None})
+
+
+def testar_status_da_pagina():
+    from bs4 import BeautifulSoup
+    html = '<div class="spe"><span><b>Status:</b> Completed</span><span><b>Tipo:</b> TV</span></div>'
+    assert at._status_da_pagina(BeautifulSoup(html, "html.parser")) == "Completed"
+    assert at._status_da_pagina(BeautifulSoup("<div></div>", "html.parser")) is None
 
 
 def testar_move_so_finalizado_sem_download_ativo():
@@ -57,15 +70,26 @@ def testar_move_so_finalizado_sem_download_ativo():
         "velho": {"titulo": "Anime Velho", "interesse": "tenho_interesse", "temporada_estreia": "Outono 2022",
                   "episodios": {}, "downloads_em_andamento": {}},
         "baixando": {"titulo": "Anime Baixando", "interesse": "tenho_interesse", "temporada_estreia": "Outono 2022",
-                     "episodios": {}, "downloads_em_andamento": {"3": {"hash": "a" * 40}}},
+                     "episodios": {}, "downloads_em_andamento": {"3": {"hash": "a" * 40, "lote": [1, 4]}}},
+        "avulso": {"titulo": "Anime Avulso", "interesse": "tenho_interesse", "temporada_estreia": "Outono 2022",
+                   "episodios": {}, "downloads_em_andamento": {"especial-1": {"hash": "b" * 40}}},
+        # Já começou a ver (assistido no MOIRAI ou progresso no MAL): fica na pasta de downloads.
+        "iniciado": {"titulo": "Anime Iniciado", "interesse": "tenho_interesse", "temporada_estreia": "Outono 2022",
+                     "episodios": {"1": "assistido"}, "downloads_em_andamento": {}},
+        "iniciado_mal": {"titulo": "Anime Iniciado MAL", "interesse": "tenho_interesse", "temporada_estreia": "Outono 2022",
+                         "episodios": {}, "downloads_em_andamento": {}, "mal_ultimo_progresso_sincronizado": 3},
         "atual": {"titulo": "Anime Atual", "interesse": "tenho_interesse", "temporada_estreia": "Verão 2026",
                   "episodios": {}, "downloads_em_andamento": {}},
     })
     for nome in ("Anime Velho - S01E01.mkv", "Anime Velho - S01E02 [Sem Censura].mkv",
-                 "Anime Velho - S01E02.5 - Especial 1.mkv", "Anime Baixando - S01E01.mkv", "Anime Atual - S01E01.mkv"):
+                 "Anime Velho - S01E02.5 - Especial 1.mkv", "Anime Baixando - S01E01.mkv", "Anime Atual - S01E01.mkv",
+                 "Anime Avulso - S01E01.mkv", "Anime Iniciado - S01E02.mkv", "Anime Iniciado MAL - S01E04.mkv"):
         _criar(downloads, nome)
 
-    assert at.organizar_animes_finalizados() == 3
+    assert at.organizar_animes_finalizados() == 4  # lote segura, especial avulso baixando não, iniciado fica
+    assert os.path.exists(os.path.join(downloads, "Anime Iniciado - S01E02.mkv"))
+    assert os.path.exists(os.path.join(downloads, "Anime Iniciado MAL - S01E04.mkv"))
+    assert os.path.exists(os.path.join(assistidos, "2026 3-Verão", "Anime Avulso", "Anime Avulso - S01E01.mkv"))
     pasta_anime = os.path.join(assistidos, "2026 3-Verão", "Anime Velho")
     assert sorted(os.listdir(pasta_anime)) == [
         "Anime Velho - S01E01.mkv", "Anime Velho - S01E02 [Sem Censura].mkv", "Anime Velho - S01E02.5 - Especial 1.mkv"]
