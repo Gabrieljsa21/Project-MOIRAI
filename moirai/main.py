@@ -128,12 +128,14 @@ def _loop_downloads():
     usuário: os episódios baixam em poucos minutos e a renomeação esperava
     até 5min pela próxima volta da manutenção. Sem download em andamento,
     verificar_downloads_em_andamento sai logo depois de ler o JSON local, sem
-    falar com o qBittorrent."""
+    falar com o qBittorrent. Depois, episódio de anime finalizado vai para a
+    pasta dele na pasta de assistidos (organizar_animes_finalizados)."""
     while True:
         try:
             if config.obter_anime_tracker_ativo():
                 with anime_tracker.lock_estado_animes:
                     anime_tracker.verificar_downloads_em_andamento()
+                    anime_tracker.organizar_animes_finalizados()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de downloads: {e}")
         time.sleep(max(5, config.obter_anime_intervalo_downloads_segundos()))

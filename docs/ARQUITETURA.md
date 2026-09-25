@@ -276,7 +276,100 @@ depois da revisão de pendências:
   conteúdo é o que o site associou ao episódio e a renomeação segue. Para
   reduzir o caso na origem, `_escolher_melhor_magnet` desempata opções da
   mesma qualidade pelo número declarado no `dn` do magnet (a qualidade
-  continua como critério principal).
+  continua acima do desempate).
+- **Sem censura primeiro.** A versão sem censura fica na mesma linha da
+  tabela (legendado) que as demais, então `_escolher_melhor_magnet` ordena
+  por (sem censura, qualidade, número no `dn`, ordem da página).
+  `_PADRAO_SEM_CENSURA` confere rótulo e `dn` juntos porque nenhum dos dois
+  é confiável sozinho: no caso real de Haite Kudasai, Takamine-san, o E10
+  só diz "Sem Censura" no rótulo, e os E06/E07 têm rótulo "1080p Censura"
+  com `[UNCENSORED]` no nome. Fica acima da qualidade porque o rótulo das
+  versões sem censura não diz "HEVC" mesmo quando o arquivo é x265. Blocos
+  de lote entram como opção quando sem censura (item abaixo).
+- **Lotes sem censura.** `_extrair_opcoes_download` devolve
+  `(rotulo, magnet, lote)`: `lote` é `None` no bloco "Episódio N" e
+  `(inicio, fim)` num bloco com intervalo (`_intervalo_do_lote`: "01~04",
+  "[01-12]") que cobre o episódio, com o título do bloco no rótulo. Lote
+  com censura fica de fora: baixar um lote só compensa pela versão sem
+  censura. Na escolha, lote perde para avulso no mesmo nível e o menor
+  ganha. Fluxo no qBittorrent:
+  - `baixar_episodio` adiciona o lote com `stop_condition="MetadataReceived"`
+    (nada baixa antes da seleção) e grava `lote` no `downloads_em_andamento`.
+    Se outro episódio do mesmo anime já acompanha o hash, não adiciona de
+    novo, só registra.
+  - `_aplicar_selecao_lotes`, a cada volta de `verificar_downloads_em_andamento`,
+    agrupa por hash, acha o arquivo de cada episódio pelo número no nome
+    (`_arquivo_do_episodio_no_lote`), põe prioridade 0 no resto e retoma.
+    Idempotente; `lote_iniciado` cobre o lote em que todo arquivo foi
+    pedido (nenhuma prioridade muda, mas precisa retomar).
+  - Na conclusão, o arquivo vem do próprio lote (não o maior vídeo da
+    pasta), a renomeação usa `torrents_rename_file` (o torrent segue ativo
+    pros outros episódios) e `torrents_delete` só roda quando
+    `_hash_ainda_acompanhado` é falso. `_tratar_downloads_travados` usa a
+    mesma guarda.
+  - O caminho novo da renomeação não repete a subpasta do torrent
+    (`na_raiz=True`), então o qBittorrent move o arquivo pra `save_path`,
+    junto dos episódios avulsos. Validado no qBittorrent real. Depois do
+    `torrents_delete`, `_remover_subpastas_vazias_do_lote` tira as pastas
+    vazias com `os.rmdir`, que nunca apaga arquivo.
+- **O que conta como número de episódio.** Só título de bloco
+  "Episódio N" (`_PADRAO_BLOCO_NUMERADO`/`_numero_do_bloco`), usado por
+  `_ultimo_episodio_da_pagina`, `_blocos_especiais` e
+  `_extrair_hashes_por_episodio`. Antes, o primeiro número de qualquer
+  título valia, e página só com pacote (bloco com o nome do anime) gerava
+  contagem falsa ("100-nin no Kanojo" = 100 episódios). `_PALAVRA_EPISODIO`
+  (`Epi.?[oó]dio`) tolera um caractere trocado no lugar do "s" ("Epi8ódio
+  18", caso real). Como `ultimo_episodio_visto` só cresce, um valor inflado
+  não se corrige sozinho: precisa de reparo nos dados.
+- **Página só com pacote.** Quando nenhum bloco é "Episódio N"
+  (`_opcoes_pacote_completo` devolve vazio em página normal), a lista de
+  episódios só existe dentro do torrent. `_baixar_pacote_completo` (chamado
+  por `_baixar_pendentes_do_registro`, só com `ultimo_episodio_visto` vazio
+  e sem pacote em andamento) escolhe a opção com `_escolher_melhor_magnet`,
+  adiciona com `_adicionar_torrent(..., parar_no_metadado=True)` e grava
+  `pacote_completo` = `{hash, rotulo, aguardando_arquivos, desde, sem_censura}`.
+  `verificar_downloads_em_andamento` roda `_expandir_pacotes_completos` antes
+  de montar os pendentes: com metadado, cada vídeo numerado vira entrada de
+  `downloads_em_andamento` com `lote` (menos os de `_episodios_ja_tratados`)
+  e `episodios_download_disparado_em` "(hash, pacote)"; o resto é o fluxo de
+  lote. Sem metadado por `anime_download_travado_horas`, ou sem vídeo
+  numerado, o torrent sai, o hash vai para `pacote_completo_tentados` e a
+  próxima checagem tenta outra opção.
+- **Link .torrent.** Páginas antigas do DarkMahou linkam
+  `nyaa.si/download/N.torrent` em vez de magnet. `_PADRAO_LINK_DOWNLOAD`
+  aceita os dois; `_hash_da_opcao`/`_nome_da_opcao` abstraem o tipo (magnet:
+  `btih`/`dn`; .torrent: SHA-1 do trecho cru de `info` e `info.name`, via
+  `_bdecode`, sem dependência nova). `_obter_torrent` guarda o resultado por
+  processo e a falha por `_SEGUNDOS_CACHE_FALHA_TORRENT` (1h): o nyaa.si
+  remove torrents, e a mesma opção é consultada várias vezes por escolha.
+  `baixar_episodio` descarta .torrent indisponível e manda os mesmos bytes
+  como `torrent_files`, para o hash acompanhado ser o do arquivo enviado.
+- **Episódio especial.** O bloco "Episódio Especial" não tem número, e
+  todo o fluxo (e a GAIA, em `moirai_client.obter_ultimos_episodios_por_status`)
+  assume `episodios` com chave numérica. Por isso o especial usa o
+  identificador `especial-K` (K = ordem entre os especiais da página) em
+  `downloads_em_andamento`, `episodios_download_disparado_em` e demais dicts
+  de auditoria (`_episodios_ja_tratados` já ignora chave não numérica), e o
+  estado em `registro["especiais"][K]` = `{"apos": N, "status": ...}`.
+  `_status_episodio`/`_definir_status_episodio` escolhem o lugar certo;
+  `_rotulo_episodio` dá "6.5 - Especial 1" para log e notificação.
+  `_blocos_especiais` calcula `apos` pelo maior episódio numerado antes do
+  bloco (a página nem sempre está em ordem). `_especiais_a_baixar` consulta
+  a página em toda checagem de anime não completo e uma vez
+  (`especiais_verificado_em`) para anime completo; o cache de 2 minutos de
+  `_obter_html_darkmahou` evita baixar a página de novo na mesma checagem.
+  Na conclusão, o nome sai `Título - S01E06.5 - Especial 1.ext` (pedido do
+  usuário: posição + qual especial), sem conferência de número no nome do
+  arquivo. `renomear_biblioteca_existente` pula esse padrão
+  (`_PADRAO_NOME_ESPECIAL`) para não tratá-lo como o E06. Painel da GAIA e
+  IRIS ainda não exibem especiais.
+- **Sufixo e rebaixamento.** `sem_censura` no `downloads_em_andamento`
+  acrescenta `SUFIXO_SEM_CENSURA` (" [Sem Censura]") ao nome final.
+  `rebaixar_sem_censura=True` em `baixar_episodio` ignora o status
+  "baixado"/"assistido" (só se a opção escolhida for sem censura) e marca o
+  download com a flag, para a guarda de "acompanhamento antigo" de
+  `verificar_downloads_em_andamento` não descartá-lo; "assistido" não volta
+  para "baixado". Não existe gatilho automático: foi usado à mão, uma vez.
 - **Falhas e alertas.** `_registrar_falha_download` grava `desde`/`motivo`
   por episódio (sem magnet, todos os magnets já travaram, erro no
   qBittorrent); a entrada sai quando o download dispara. A checagem devolve
@@ -315,6 +408,39 @@ POST da ponte HTTP ficaram FORA de propósito: a checagem segura o lock por
 ~50s e o cliente da GAIA desiste em 30s, então marcar interesse durante uma
 checagem viraria erro; a janela de colisão delas com o loop é de
 milissegundos (cada função recarrega o JSON logo antes de salvar).
+
+## Anime finalizado em pasta própria por temporada (2026-09-25)
+
+Pedido do usuário: anime já finalizado que está sendo baixado fica cada um
+na sua pasta, dentro de uma pasta da temporada em que foi baixado, na pasta
+de assistidos (`E:\Downloads\Anime\2026 3-Verão\{Título}`). Numeração da
+estação: 1-Inverno (jan-mar), 2-Primavera (abr-jun), 3-Verão (jul-set),
+4-Outono (out-dez), para o Explorer ordenar cronologicamente.
+
+- **O que é "finalizado".** `anime_ja_finalizado`: estreia 2 temporadas
+  atrás ou antes, ou na temporada anterior com o site já no total de
+  episódios do MAL. Anime da temporada atual, ou da anterior ainda
+  lançando (dois cours seguidos, caso de Re:Zero 4), não entra. Sem
+  `temporada_estreia`, também não.
+- **Quando move.** `organizar_animes_finalizados` roda no loop de downloads
+  (30s), depois de `verificar_downloads_em_andamento`, e move da RAIZ da
+  pasta de downloads (episódio normal, sem censura e especial). Anime com
+  download em andamento ou pacote aguardando metadado fica para depois:
+  arquivo de lote continua no torrent até o último episódio. A movimentação
+  acontece depois da renomeação, com o `save_path` do qBittorrent intacto,
+  porque todo o fluxo de renomeação/lote assume a pasta de downloads. Nunca
+  sobrescreve arquivo existente.
+- **Temporada fixa por anime.** A primeira movimentação grava
+  `registro["temporada_organizada"]`; os episódios seguintes vão para a
+  mesma pasta mesmo que a estação vire no meio do download.
+- **Baixado x assistido.** As pastas "AAAA N-Estação" ficam dentro da pasta
+  de assistidos, mas `sincronizar_biblioteca_local` as conta como
+  "baixado" (`_mapear_arquivos_por_titulo(..., ignorar=...)` as exclui da
+  varredura de assistidos). Como o arquivo não sai da pasta do anime, o
+  "assistido" vem do player do MOIRAI (`_concluir_episodio_assistido` marca
+  o status sem mover) ou do Painel ("último assistido"); a varredura nunca
+  rebaixa "assistido". `obter_primeiro_episodio_baixado` também procura
+  nessas pastas.
 
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
