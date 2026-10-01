@@ -7,6 +7,11 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+### Adicionado
+
+- **Anime completo apaga os episódios assistidos (2026-10-01, pedido do usuário)**: quando `sincronizar_progresso_mal` recebe sucesso do MAL para o último episódio ("completed"), `_apagar_episodios_assistidos_apos_conclusao` remove os vídeos renomeados daquele anime da pasta de assistidos, grava `anime_completo_em`/`episodios_removidos_apos_completo` no registro e chama o callback novo (`definir_callback_anime_completo`), que `main.py` entrega à GAIA por webhook (`MOIRAI_GAIA_ANIME_COMPLETO_WEBHOOK_URL`, padrão `http://127.0.0.1:8766/moirai/anime_completo`). Exceção consciente à regra "nunca apagar arquivo" (a outra remoção do projeto só troca o .mp4 pelo .mkv convertido): não roda se o MAL falhar, não toca em outro anime, em arquivo que não é vídeo do anime nem nas pastas de temporada (que contam como "baixado"). O status "assistido" fica no registro, então a varredura da biblioteca não reverte nem baixa de novo. Coberto por `testes/testar_anime_completo_limpeza.py`.
+- **Rota `POST /anime/sincronizar_progresso`**: varre a biblioteca e envia o progresso ao MAL na hora, para o botão "📚" do Painel da GAIA.
+
 ### Corrigido
 
 - **Busca no MAL não achava anime com classificação sensível (2026-09-25, caso real Shinobi no Ittoki, id 51098)**: `mal_client.buscar_anime` não mandava `nsfw=true`, e a API do MAL devolvia lista vazia sem erro. Por isso vários animes rastreados ficavam sem `mal_num_episodios`.

@@ -10,7 +10,9 @@ da extração:
 - **Arquivos parciais de torrent travado** (2026-09-24) - Prioridade
   Baixa, Complexidade Baixa, Status ⚠️ decisão pendente.
   `_tratar_downloads_travados` remove o torrent com `delete_files=False`
-  (mesma regra do resto do projeto: nunca apagar arquivo), então o pedaço
+  (mesma regra do resto do projeto: nunca apagar arquivo; a única exceção
+  são os episódios de anime já concluído no MAL, ver ARQUITETURA.md
+  "Anime completo"), então o pedaço
   baixado do torrent morto fica na pasta de downloads com o nome original
   do fansub. Se isso começar a acumular, decidir entre apagar só parciais
   de torrent que o próprio MOIRAI disparou ou listar no Painel para
