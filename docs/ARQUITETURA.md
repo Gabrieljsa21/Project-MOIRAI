@@ -567,6 +567,41 @@ sem seeder em `downloads_em_andamento`.
   começar depois de movido continua na pasta: o arquivo já está lá, e
   voltar sozinho seria confuso.
 
+## Anime completo apaga os episódios assistidos (2026-10-01)
+
+Pedido do usuário: ao terminar um anime, os vídeos assistidos não precisam
+mais ocupar espaço. É uma exceção consciente à regra "nunca apagar
+arquivo" do projeto, por isso o gatilho é o mais conservador possível:
+
+- **Quando:** só dentro de `sincronizar_progresso_mal`, depois que o MAL
+  respondeu sucesso para o último episódio (`esta_completo` → status
+  "completed"). Sincronização com o MAL desligada ou erro na API não apaga
+  nada. Como `mal_ultimo_progresso_sincronizado` passa a ser o último
+  episódio, a conclusão nunca roda duas vezes.
+- **O quê:** `_apagar_episodios_assistidos_apos_conclusao` percorre a pasta
+  de assistidos e remove só vídeo (`EXTENSOES_VIDEO`) cujo nome renomeado
+  pelo MOIRAI (`_titulo_do_nome_arquivo`) bate com o título sanitizado do
+  anime. Fica de fora qualquer arquivo dentro de pasta de temporada
+  (`_dentro_de_pasta_temporada`): elas estão dentro de assistidos, mas o que
+  está lá conta como "baixado", o mesmo critério de `sincronizar_biblioteca_
+  local`.
+- **Por que não baixa de novo:** `sincronizar_biblioteca_local` só reverte
+  episódio "baixado" que sumiu do disco; "assistido" fica no registro mesmo
+  sem arquivo, e o anime completo não tem episódio novo para pedir.
+- **Registro e aviso:** grava `anime_completo_em` e
+  `episodios_removidos_apos_completo`, e chama o callback registrado por
+  `definir_callback_anime_completo`. `main.py` entrega à GAIA por webhook
+  (`MOIRAI_GAIA_ANIME_COMPLETO_WEBHOOK_URL`, padrão
+  `http://127.0.0.1:8766/moirai/anime_completo`, corpo `{titulo, episodio,
+  removidos}`), e ela avisa no Discord. Falha no webhook é ignorada, como no
+  aviso de episódio assistido.
+
+Junto veio `POST /anime/sincronizar_progresso` (`api_bridge.py`): roda
+`sincronizar_biblioteca_local` e `sincronizar_progresso_mal` na hora, para
+o botão "📚" do Painel da GAIA, sem esperar o ciclo de manutenção.
+
+Ver `testes/testar_anime_completo_limpeza.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/

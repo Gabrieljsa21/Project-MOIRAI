@@ -99,6 +99,19 @@ def _avisar_episodio_assistido_webhook(titulo, numero_episodio):
         pass
 
 
+def _avisar_anime_completo_webhook(titulo, numero_episodio, removidos):
+    """Entrega à GAIA a conclusão confirmada no MAL e a limpeza feita."""
+    import json
+    import urllib.request
+    url = os.environ.get("MOIRAI_GAIA_ANIME_COMPLETO_WEBHOOK_URL", "http://127.0.0.1:8766/moirai/anime_completo")
+    try:
+        corpo = json.dumps({"titulo": titulo, "episodio": numero_episodio, "removidos": removidos}).encode("utf-8")
+        req = urllib.request.Request(url, data=corpo, method="POST", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=3)
+    except Exception:
+        pass
+
+
 def _gaia_rodando():
     """GAIA de pé = porta da ponte HTTP dela aceitando conexão (a mesma do
     webhook `MOIRAI_GAIA_WEBHOOK_URL`)."""
@@ -164,6 +177,7 @@ def main():
     PASTA_DADOS.mkdir(parents=True, exist_ok=True)
 
     anime_tracker.definir_callback_episodio_movido_assistidos(_avisar_episodio_assistido_webhook)
+    anime_tracker.definir_callback_anime_completo(_avisar_anime_completo_webhook)
 
     threading.Thread(target=_loop_downloads, daemon=True).start()
     threading.Thread(target=_loop_manutencao, daemon=True).start()

@@ -178,6 +178,13 @@ class _API(BaseHTTPRequestHandler):
         elif caminho == "/anime/sincronizar_biblioteca":
             anime_tracker.sincronizar_biblioteca_local()
             self._responder_ok()
+        elif caminho == "/anime/sincronizar_progresso":
+            # Ação manual do Painel: primeiro reflete os arquivos que foram
+            # movidos para "assistidos", depois envia o novo maior episódio
+            # assistido ao MAL sem esperar o próximo ciclo de manutenção.
+            anime_tracker.sincronizar_biblioteca_local()
+            anime_tracker.sincronizar_progresso_mal()
+            self._responder_json({"sucesso": True})
         elif caminho.startswith("/anime/assistir/"):
             titulo = urllib.parse.unquote(caminho[len("/anime/assistir/"):])
 

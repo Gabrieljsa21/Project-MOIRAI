@@ -2606,6 +2606,7 @@ def _resolver_comando_player(caminho_arquivo):
 # queria de verdade é ser avisado sempre que a Gaia MESMA move um arquivo pra
 # pasta de assistidos, sem essa distinção.
 _callback_episodio_movido_assistidos = None
+_callback_anime_completo = None
 
 
 def definir_callback_episodio_movido_assistidos(callback):
@@ -2614,6 +2615,12 @@ def definir_callback_episodio_movido_assistidos(callback):
     pra pasta de assistidos."""
     global _callback_episodio_movido_assistidos
     _callback_episodio_movido_assistidos = callback
+
+
+def definir_callback_anime_completo(callback):
+    """`callback(titulo, episodio, removidos)` após concluir no MAL."""
+    global _callback_anime_completo
+    _callback_anime_completo = callback
 
 
 def _concluir_episodio_assistido(chave, numero_episodio, caminho_arquivo, ao_concluir=None):
@@ -3444,6 +3451,36 @@ def esta_completo(registro):
     return bool(assistido) and assistido >= total_episodios
 
 
+def _apagar_episodios_assistidos_apos_conclusao(registro):
+    """Remove só os vídeos renomeados do anime concluído em assistidos.
+
+    🔥 Exceção consciente à regra "nunca apagar arquivo" (2026-10-01, pedido
+    do usuário): só roda depois que o MAL confirmou "completed", e só na
+    pasta de assistidos. As pastas de temporada (`organizar_animes_
+    finalizados`) ficam de fora: estão dentro de assistidos, mas o que está
+    nelas conta como "baixado" (mesmo critério de `sincronizar_biblioteca_
+    local`). O status "assistido" fica no registro, então a varredura não
+    reverte nem baixa de novo os episódios apagados."""
+    pasta = obter_anime_pasta_assistidos()
+    if not pasta or not os.path.isdir(pasta):
+        return 0
+    titulo = _sanitizar_nome_arquivo(registro["titulo"])
+    removidos = 0
+    for raiz, _, arquivos in os.walk(pasta, topdown=False):
+        for nome in arquivos:
+            if not nome.lower().endswith(EXTENSOES_VIDEO) or _titulo_do_nome_arquivo(nome) != titulo:
+                continue
+            caminho = os.path.join(raiz, nome)
+            if _dentro_de_pasta_temporada(caminho):
+                continue
+            try:
+                os.remove(caminho)
+                removidos += 1
+            except OSError as e:
+                print(f" [SISTEMA] Erro ao apagar episódio concluído '{caminho}': {e}")
+    return removidos
+
+
 def sincronizar_progresso_mal():
     """Fase 2 (docs/TODO.md) - roda no mesmo loop de 5min de
     sincronizar_biblioteca_local (_monitorar_downloads_animes_loop, run.py),
@@ -3479,6 +3516,14 @@ def sincronizar_progresso_mal():
         sucesso, erro = mal_client.atualizar_progresso(mal_anime_id, assistido, status=status)
         if sucesso:
             registro["mal_ultimo_progresso_sincronizado"] = assistido
+            if eh_ultimo_episodio:
+                removidos = _apagar_episodios_assistidos_apos_conclusao(registro)
+                registro["anime_completo_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                registro["episodios_removidos_apos_completo"] = removidos
+                if removidos:
+                    print(f" [SISTEMA] 🧹 Anime completo: {removidos} episódio(s) de '{registro['titulo']}' removido(s) da pasta de assistidos.")
+                if _callback_anime_completo:
+                    _callback_anime_completo(registro["titulo"], assistido, removidos)
             mudou = True
             print(f" [SISTEMA] 🎬 MAL atualizado: \"{registro['titulo']}\" -> episódio {assistido}{' (Completed)' if eh_ultimo_episodio else ''}.")
         else:
