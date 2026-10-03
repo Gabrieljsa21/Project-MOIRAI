@@ -165,6 +165,7 @@ def _loop_manutencao():
                 with anime_tracker.lock_estado_animes:
                     anime_tracker.sincronizar_biblioteca_local()
                     anime_tracker.sincronizar_progresso_mal()
+                anime_tracker.backfill_trailers()  # 🔥 2026-10-03 - fora do lock, ver docstring
                 _checagem_autonoma_se_preciso()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de manutenção: {e}")

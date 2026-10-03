@@ -509,7 +509,7 @@ def obter_trailer(chave):
     registro = _carregar_animes().get(chave)
     if not registro:
         return None, "Anime não encontrado."
-    if registro.get("trailer_url"):
+    if "trailer_url" in registro:  # já consultado (None = página sem trailer)
         return registro["trailer_url"], None
     if chave in _cache_trailer:
         return _cache_trailer[chave], None
@@ -521,6 +521,40 @@ def obter_trailer(chave):
         return None, f"Erro ao acessar a página do anime: {e}"
     _cache_trailer[chave] = _trailer_da_pagina(BeautifulSoup(html, "html.parser"))
     return _cache_trailer[chave], None
+
+
+_LIMITE_BACKFILL_TRAILER_POR_EXECUCAO = 10
+
+
+def backfill_trailers():
+    """Preenche `trailer_url` de quem ainda não tem o campo (rastreado antes de
+    2026-10-03, ou pendente que só apareceu na home), para o botão "Trailer"
+    do Painel abrir sem esperar a página (~4s com a rede lenta). Chamada pelo
+    loop de manutenção SEM `lock_estado_animes`: as páginas são baixadas fora
+    do lock e só a gravação o usa, para não segurar o loop de downloads.
+    Grava None quando a página não tem trailer (o campo existir já conta
+    como "consultado"). Até _LIMITE_BACKFILL_TRAILER_POR_EXECUCAO por volta.
+    Devolve quantos consultou."""
+    alvos = [
+        (chave, registro["url"]) for chave, registro in _carregar_animes().items()
+        if registro.get("interesse") != "sem_interesse" and "trailer_url" not in registro and registro.get("url")
+    ][:_LIMITE_BACKFILL_TRAILER_POR_EXECUCAO]
+    encontrados = {}
+    for chave, url in alvos:
+        try:
+            encontrados[chave] = _trailer_da_pagina(BeautifulSoup(_obter_html_darkmahou(url), "html.parser"))
+        except Exception:
+            continue  # rede falhou: tenta de novo na próxima volta
+    if not encontrados:
+        return 0
+    with lock_estado_animes:
+        animes = _carregar_animes()
+        for chave, trailer in encontrados.items():
+            if chave in animes and animes[chave].get("interesse") != "sem_interesse":
+                animes[chave]["trailer_url"] = trailer
+        _salvar_animes(animes)
+    _cache_trailer.update(encontrados)
+    return len(encontrados)
 
 
 _LIMITE_BACKFILL_TEMPORADA_POR_EXECUCAO = 20

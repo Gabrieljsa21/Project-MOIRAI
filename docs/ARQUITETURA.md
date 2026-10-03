@@ -618,6 +618,12 @@ link (só aceita YouTube).
   guarda em `_cache_trailer`, em memória. Não grava no JSON: esperar
   `lock_estado_animes` travaria o clique do Painel durante uma checagem
   completa.
+- **Preenchimento em segundo plano:** `backfill_trailers`, chamado pelo
+  `_loop_manutencao` (`main.py`) a cada volta, consulta até 10 animes sem o
+  campo. Baixa as páginas sem `lock_estado_animes` e só grava sob o lock
+  (recarregando o JSON), para não segurar o loop de downloads. Grava `None`
+  quando a página não tem trailer; a chave existir já conta como
+  consultado, e `obter_trailer` não lê a página de novo.
 
 Ver `testes/testar_trailer.py`.
 
