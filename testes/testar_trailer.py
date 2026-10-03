@@ -55,9 +55,27 @@ def testar_obter_trailer_sem_trailer_e_inexistente():
     assert at.obter_trailer("outro")[0] is None and at.obter_trailer("outro")[1]
 
 
+def testar_backfill_trailers():
+    _preparar({
+        "com": {"titulo": "A", "url": URL, "interesse": "tenho_interesse"},
+        "sem": {"titulo": "B", "url": URL + "b/", "interesse": "pendente"},
+        "ignorado": {"titulo": "C", "url": URL + "c/", "interesse": "sem_interesse"},
+        "pronto": {"titulo": "D", "url": URL + "d/", "interesse": "pendente", "trailer_url": None},
+    })
+    requisicoes = []
+    at._obter_html_darkmahou = lambda url: requisicoes.append(url) or (HTML if url == URL else HTML_SEM_TRAILER)
+    assert at.backfill_trailers() == 2
+    animes = at._carregar_animes()
+    assert animes["com"]["trailer_url"] == TRAILER and animes["sem"]["trailer_url"] is None
+    assert "trailer_url" not in animes["ignorado"] and sorted(requisicoes) == [URL, URL + "b/"]
+    assert at.backfill_trailers() == 0  # tudo consultado: nenhuma página nova
+    assert at.obter_trailer("sem") == (None, None) and len(requisicoes) == 2  # None gravado não refaz a busca
+
+
 if __name__ == "__main__":
     testar_trailer_da_pagina()
     testar_adicionar_manual_grava_trailer()
     testar_obter_trailer_sob_demanda_com_cache()
     testar_obter_trailer_sem_trailer_e_inexistente()
+    testar_backfill_trailers()
     print("OK")
