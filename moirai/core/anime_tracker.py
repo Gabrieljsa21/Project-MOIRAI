@@ -487,6 +487,42 @@ def _status_da_pagina(soup):
     return None
 
 
+def _trailer_da_pagina(soup):
+    """Link do YouTube do botão "Trailer" da página do anime
+    (`a.trailerbutton`, o mesmo que o site abre no lightbox), ou None."""
+    link = soup.select_one("a.trailerbutton[href]")
+    return link["href"] if link and "youtu" in link["href"] else None
+
+
+# 🔥 2026-10-03 - cache em memória do trailer de quem ainda não tem
+# `trailer_url` gravado (rastreado antes do campo existir). Não grava no JSON
+# daqui: o endpoint é chamado pelo Painel e esperar `lock_estado_animes`
+# travaria o clique durante uma checagem completa.
+_cache_trailer = {}
+
+
+def obter_trailer(chave):
+    """Link do trailer no YouTube de um anime rastreado. Usa o `trailer_url`
+    gravado pela checagem; sem ele, lê a página do anime (1 request, depois
+    fica em cache). Devolve (url, erro) - (None, None) quando a página não
+    tem trailer."""
+    registro = _carregar_animes().get(chave)
+    if not registro:
+        return None, "Anime não encontrado."
+    if registro.get("trailer_url"):
+        return registro["trailer_url"], None
+    if chave in _cache_trailer:
+        return _cache_trailer[chave], None
+    if not registro.get("url"):
+        return None, None
+    try:
+        html = _obter_html_darkmahou(registro["url"])
+    except Exception as e:
+        return None, f"Erro ao acessar a página do anime: {e}"
+    _cache_trailer[chave] = _trailer_da_pagina(BeautifulSoup(html, "html.parser"))
+    return _cache_trailer[chave], None
+
+
 _LIMITE_BACKFILL_TEMPORADA_POR_EXECUCAO = 20
 
 
@@ -635,6 +671,7 @@ def _atualizar_lancamentos_fora_da_home(animes, chaves_na_home, relatorio):
         relatorio["paginas_consultadas"] += 1
         soup = BeautifulSoup(html, "html.parser")
         registro["status_site"] = _status_da_pagina(soup) or registro.get("status_site")  # anime_ja_finalizado
+        registro["trailer_url"] = _trailer_da_pagina(soup) or registro.get("trailer_url")
         ultimo_pagina = _ultimo_episodio_da_pagina(soup)
         anterior = registro.get("ultimo_episodio_visto")
         if ultimo_pagina is not None and (anterior is None or ultimo_pagina > anterior):
@@ -763,6 +800,7 @@ def adicionar_anime_manual(url):
         registro["ultimo_episodio_visto"] = ultimo_episodio
     registro["filme"] = _pagina_eh_filme(soup)  # 🔥 2026-09-25: o Painel pula a seleção de episódios
     registro["status_site"] = _status_da_pagina(soup)
+    registro["trailer_url"] = _trailer_da_pagina(soup)
     registro["temporada_estreia"] = _extrair_temporada_estreia(soup)  # 🔥 2026-08-14 - já temos o soup, sem request extra
     animes[chave] = registro
     _salvar_animes(animes)
