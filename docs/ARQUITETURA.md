@@ -602,6 +602,25 @@ o botão "📚" do Painel da GAIA, sem esperar o ciclo de manutenção.
 
 Ver `testes/testar_anime_completo_limpeza.py`.
 
+## Trailer do anime (2026-10-03)
+
+Pedido do usuário: o botão "Trailer" do DarkMahou dentro do Assistente de
+Animes da GAIA. A página do anime tem `<a class="trailerbutton"
+href="https://www.youtube.com/watch?v=...">`; `_trailer_da_pagina` lê esse
+link (só aceita YouTube).
+
+- **Onde grava:** `trailer_url` no registro, nos dois lugares que já têm o
+  `soup` da página sem request extra: `adicionar_anime_manual` e
+  `_atualizar_lancamentos_fora_da_home`.
+- **Sob demanda:** `obter_trailer(chave)` (rota `GET /anime/trailer/<chave>`,
+  resposta `{url, erro}`) usa o campo gravado; sem ele (anime rastreado antes
+  do campo, ou pendente que só apareceu na home), lê a página uma vez e
+  guarda em `_cache_trailer`, em memória. Não grava no JSON: esperar
+  `lock_estado_animes` travaria o clique do Painel durante uma checagem
+  completa.
+
+Ver `testes/testar_trailer.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/

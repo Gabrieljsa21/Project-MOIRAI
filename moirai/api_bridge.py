@@ -98,6 +98,11 @@ class _API(BaseHTTPRequestHandler):
                 return
             lancado, baixado, assistido = anime_tracker.obter_ultimos_episodios_por_status(registro)
             self._responder_json({"lancado": lancado, "baixado": baixado, "assistido": assistido})
+        elif caminho.startswith("/anime/trailer/"):
+            # 🔥 2026-10-03 - botão "Trailer" do Assistente de Animes (GAIA).
+            chave = urllib.parse.unquote(caminho[len("/anime/trailer/"):])
+            url, erro = anime_tracker.obter_trailer(chave)
+            self._responder_json({"url": url, "erro": erro})
         elif caminho.startswith("/anime/capa/"):
             chave = urllib.parse.unquote(caminho[len("/anime/capa/"):])
             capa_url = (params.get("url") or [""])[0]
