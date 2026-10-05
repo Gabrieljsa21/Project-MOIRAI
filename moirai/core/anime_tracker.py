@@ -3553,6 +3553,31 @@ def _apagar_episodios_assistidos_apos_conclusao(registro):
     return removidos
 
 
+def _atualizar_total_episodios_mal(registro):
+    """Busca de novo no MAL o total de episódios de quem ainda não tem.
+
+    🔥 2026-10-05, bug real (Katainaka no Ossan II, 12 de 12 assistidos,
+    "Finished Airing" no MAL e nunca virou completo): o total só era gravado
+    no casamento, e anime em exibição costuma vir com `num_episodes` 0 nessa
+    hora. Sem total, `esta_completo` nunca dava True. Consulta no máximo 1x
+    por dia por anime (`mal_total_verificado_em`). Quando o total aparece e o
+    progresso já sincronizado chega nele, marca `mal_conclusao_pendente`:
+    sem isso o último episódio, já enviado como "watching", nunca seria
+    reenviado como "completed". Devolve True se mexeu no registro."""
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    if registro.get("mal_num_episodios") or registro.get("mal_total_verificado_em") == hoje:
+        return False
+    registro["mal_total_verificado_em"] = hoje
+    anime, erro = mal_client.obter_anime_por_id(registro["mal_anime_id"])
+    if erro or not anime or not anime.get("num_episodes"):
+        return True
+    registro["mal_num_episodios"] = anime["num_episodes"]
+    if (registro.get("mal_ultimo_progresso_sincronizado") or 0) >= anime["num_episodes"]:
+        registro["mal_conclusao_pendente"] = True
+    print(f" [SISTEMA] 🎬 Total de episódios de \"{registro['titulo']}\" agora conhecido no MAL: {anime['num_episodes']}.")
+    return True
+
+
 def sincronizar_progresso_mal():
     """Fase 2 (docs/TODO.md) - roda no mesmo loop de 5min de
     sincronizar_biblioteca_local (_monitorar_downloads_animes_loop, run.py),
@@ -3564,8 +3589,8 @@ def sincronizar_progresso_mal():
     última vez (`mal_ultimo_progresso_sincronizado`) - só chama a API se
     SUBIU, evitando repetir a mesma chamada toda checagem. Marca status
     "completed" se bateu (ou passou) o total de episódios conhecido
-    (`mal_num_episodios`, guardado no casamento - None se desconhecido, nesse
-    caso nunca marca completed sozinho, só atualiza o progresso). Sempre loga
+    (`mal_num_episodios`, guardado no casamento; se veio vazio, é buscado de
+    novo 1x por dia em _atualizar_total_episodios_mal). Sempre loga
     a chamada de verdade (sucesso ou erro) - pedido do usuário: nada de mexer
     na conta dele sem avisar."""
     if not mal_client.esta_configurado() or not obter_mal_sync_ativo():
@@ -3579,8 +3604,10 @@ def sincronizar_progresso_mal():
         _, _, assistido = obter_ultimos_episodios_por_status(registro)
         if assistido is None:
             continue
+        if _atualizar_total_episodios_mal(registro):
+            mudou = True
         ja_sincronizado = registro.get("mal_ultimo_progresso_sincronizado") or 0
-        if assistido <= ja_sincronizado:
+        if assistido <= ja_sincronizado and not registro.get("mal_conclusao_pendente"):
             continue
 
         eh_ultimo_episodio = esta_completo(registro)
@@ -3588,6 +3615,7 @@ def sincronizar_progresso_mal():
         sucesso, erro = mal_client.atualizar_progresso(mal_anime_id, assistido, status=status)
         if sucesso:
             registro["mal_ultimo_progresso_sincronizado"] = assistido
+            registro.pop("mal_conclusao_pendente", None)
             if eh_ultimo_episodio:
                 removidos = _apagar_episodios_assistidos_apos_conclusao(registro)
                 registro["anime_completo_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
