@@ -15,6 +15,7 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ### Corrigido
 
+- **Anime finalizado no MAL não virava completo (2026-10-05, caso real Katainaka no Ossan II, MAL 61897)**: o total de episódios (`mal_num_episodios`) só era gravado no casamento com o MAL, quando anime em exibição ainda vem com total 0. Sem total, o anime nunca contava como completo: ficava na aba "Em dia", não ia para "Completed" no MAL e os episódios assistidos não eram apagados. `_atualizar_total_episodios_mal` busca o total de novo (no máximo 1x por dia por anime) e, se o último episódio já tinha sido enviado como "watching", `mal_conclusao_pendente` faz o reenvio como "completed". Animes completos antes de 2026-10-01 continuam sem limpeza retroativa. Coberto por `testes/testar_anime_completo_limpeza.py`.
 - **Busca no MAL não achava anime com classificação sensível (2026-09-25, caso real Shinobi no Ittoki, id 51098)**: `mal_client.buscar_anime` não mandava `nsfw=true`, e a API do MAL devolvia lista vazia sem erro. Por isso vários animes rastreados ficavam sem `mal_num_episodios`.
 
 ### Adicionado

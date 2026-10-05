@@ -90,6 +90,55 @@ def testar_falha_no_mal_nao_apaga():
     assert os.listdir(assistidos).count("Anime Fim - S01E01.mkv") == 1
 
 
+def testar_total_desconhecido_no_casamento_completa_depois():
+    """Caso real (Katainaka no Ossan II): casado em exibição, sem total; os 12
+    episódios já foram enviados como "watching". Quando o MAL passa a dar o
+    total, o anime vira completo. Anime antigo, já completo antes da limpeza
+    existir (total conhecido, sem `anime_completo_em`), não é tocado."""
+    tardio = _registro("Anime Tardio", None, 2)
+    tardio["mal_ultimo_progresso_sincronizado"] = 2
+    antigo = _registro("Anime Antigo", 2, 2)
+    antigo["mal_ultimo_progresso_sincronizado"] = 2
+    assistidos = _preparar({"tardio": tardio, "antigo": antigo})
+    for nome in ("Anime Tardio - S01E01.mkv", "Anime Tardio - S01E02.mkv", "Anime Antigo - S01E02.mkv"):
+        _criar(os.path.join(assistidos, nome))
+
+    consultas = []
+    at.mal_client.obter_anime_por_id = lambda mal_id: (consultas.append(mal_id) or ({"id": mal_id, "title": "x", "num_episodes": 2}, None))
+    chamadas_mal = []
+    at.mal_client.atualizar_progresso = lambda anime_id, ep, status: (chamadas_mal.append((ep, status)) or (True, None))
+    avisos = []
+    at.definir_callback_anime_completo(lambda titulo, ep, removidos: avisos.append((titulo, ep, removidos)))
+
+    at.sincronizar_progresso_mal()
+
+    assert consultas == [1], f"só quem não tem total consulta o MAL: {consultas}"
+    assert chamadas_mal == [(2, "completed")], chamadas_mal
+    assert avisos == [("Anime Tardio", 2, 2)], avisos
+    assert sorted(os.listdir(assistidos)) == ["2026 3-Verão", "Anime Antigo - S01E02.mkv"]
+    registro = at._carregar_animes()["tardio"]
+    assert registro["mal_num_episodios"] == 2 and "mal_conclusao_pendente" not in registro
+
+    consultas.clear()
+    chamadas_mal.clear()
+    at.sincronizar_progresso_mal()
+    assert consultas == [] and chamadas_mal == [], "conclusão não se repete"
+
+
+def testar_total_ainda_desconhecido_consulta_uma_vez_por_dia():
+    registro = _registro("Anime Aberto", None, 1)
+    registro["mal_ultimo_progresso_sincronizado"] = 1
+    _preparar({"aberto": registro})
+    consultas = []
+    at.mal_client.obter_anime_por_id = lambda mal_id: (consultas.append(mal_id) or ({"id": mal_id, "title": "x", "num_episodes": None}, None))
+    at.mal_client.atualizar_progresso = lambda *a, **k: (_ for _ in ()).throw(AssertionError("não devia chamar o MAL"))
+
+    at.sincronizar_progresso_mal()
+    at.sincronizar_progresso_mal()
+
+    assert consultas == [1], consultas
+
+
 if __name__ == "__main__":
     for nome, funcao in list(globals().items()):
         if nome.startswith("testar_"):

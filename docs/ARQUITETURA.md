@@ -602,6 +602,26 @@ o botão "📚" do Painel da GAIA, sem esperar o ciclo de manutenção.
 
 Ver `testes/testar_anime_completo_limpeza.py`.
 
+### Total de episódios desconhecido no casamento (2026-10-05)
+
+Caso real: Katainaka no Ossan II (MAL 61897), 12 de 12 assistidos,
+"Finished Airing" no MAL, seguia em "Em dia" sem virar completo. O total
+(`mal_num_episodios`) só era gravado no casamento, e anime em exibição vem
+do MAL com `num_episodes` 0. Sem total, `esta_completo` nunca dá True, e o
+12º episódio foi enviado como "watching". Outros 10 animes estavam assim.
+
+- `_atualizar_total_episodios_mal`, chamado em `sincronizar_progresso_mal`
+  para quem tem `mal_anime_id`, algum episódio assistido e ainda não tem
+  total, consulta `mal_client.obter_anime_por_id` no máximo 1x por dia
+  (`mal_total_verificado_em`).
+- Se o total aparece e `mal_ultimo_progresso_sincronizado` já chega nele,
+  grava `mal_conclusao_pendente`, que fura o filtro "só chama a API se
+  subiu" e reenvia o último episódio como "completed". O campo sai no
+  sucesso.
+- Anime que já estava completo antes da limpeza existir (total conhecido,
+  sem `anime_completo_em`) não é afetado: só a descoberta tardia do total
+  marca a conclusão pendente.
+
 ## Trailer do anime (2026-10-03)
 
 Pedido do usuário: o botão "Trailer" do DarkMahou dentro do Assistente de
