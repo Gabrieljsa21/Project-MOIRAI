@@ -2265,7 +2265,7 @@ def verificar_downloads_em_andamento():
                         _renomear_arquivo_via_api_qbittorrent(
                             cliente, torrents[0], arquivo_video, nome_novo, na_raiz=True)
                     else:
-                        os.rename(arquivo_video, caminho_novo)
+                        _renomear_episodio_avulso(cliente, torrents[0], arquivo_video, caminho_novo)
                     registro.setdefault("episodios_renomeado_em", {})[numero_episodio_str] = agora
                 else:
                     registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = (
@@ -3201,6 +3201,31 @@ def _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, nome_
     pasta_relativa = "" if na_raiz else os.path.dirname(caminho_relativo_atual)
     caminho_relativo_novo = os.path.join(pasta_relativa, nome_novo) if pasta_relativa else nome_novo
     cliente.torrents_rename_file(torrent_hash=torrent.hash, old_path=caminho_relativo_atual, new_path=caminho_relativo_novo)
+
+
+# 🔥 2026-10-07, caso real Tensei Goblin dakedo Shitsumon Aru? E01: torrent em
+# 100% semeando com o arquivo aberto pelo qBittorrent - `os.rename` falhava
+# com WinError 32 a cada 30s e o episódio nunca virava "baixado". Pela API o
+# próprio qBittorrent renomeia o arquivo que ele mesmo segura. A API responde
+# antes do rename acontecer no disco, então espera o arquivo novo aparecer.
+_SEGUNDOS_ESPERA_RENAME_API = 10
+
+
+def _renomear_episodio_avulso(cliente, torrent, arquivo_video, caminho_novo):
+    """`os.rename` direto; se o arquivo estiver em uso (PermissionError, o
+    WinError 32 do Windows), renomeia pela API do qBittorrent. Lança exceção
+    se nenhum dos dois funcionar - o chamador registra e tenta de novo."""
+    try:
+        os.rename(arquivo_video, caminho_novo)
+        return
+    except PermissionError:
+        pass
+    _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, os.path.basename(caminho_novo))
+    limite = time.time() + _SEGUNDOS_ESPERA_RENAME_API
+    while not os.path.exists(caminho_novo):
+        if time.time() >= limite:
+            raise OSError(f"arquivo em uso e o qBittorrent não renomeou em {_SEGUNDOS_ESPERA_RENAME_API}s")
+        time.sleep(0.5)
 
 
 def renomear_por_hash_qbittorrent(dry_run=False, remover_da_lista_depois=True):

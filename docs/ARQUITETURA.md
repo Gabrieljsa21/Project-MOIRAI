@@ -664,6 +664,25 @@ site respondia 200, mas `listar_ultimos_lancamentos` não achava a seção e
 
 Ver `testes/testar_home_layout_dm.py`.
 
+## Rename de episódio com o arquivo em uso (2026-10-07)
+
+Torrent de episódio avulso terminado era renomeado com `os.rename`. Enquanto o
+qBittorrent semeia (principalmente com par conectado), ele mantém o arquivo
+aberto, e o Windows recusa o rename (WinError 32). O episódio ficava em
+`downloads_em_andamento` e o erro se repetia no log a cada volta do loop.
+
+- `_renomear_episodio_avulso` tenta `os.rename` primeiro (caminho de sempre,
+  síncrono). Só no `PermissionError` usa `_renomear_arquivo_via_api_qbittorrent`,
+  o mesmo do lote: o próprio qBittorrent renomeia o arquivo que segura.
+- A API responde antes do rename acontecer no disco, então a função espera até
+  `_SEGUNDOS_ESPERA_RENAME_API` (10s) o caminho novo existir. Se não aparecer,
+  lança exceção e o fluxo antigo de erro (registro em `episodios_erro_renomear`
+  e nova tentativa) continua valendo.
+- O caminho de renomear a biblioteca (`os.rename` em torrent já fora do
+  qBittorrent) não muda: lá ninguém segura o arquivo.
+
+Ver `testes/testar_renomear_arquivo_em_uso.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
