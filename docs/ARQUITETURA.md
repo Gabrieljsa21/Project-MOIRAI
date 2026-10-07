@@ -647,6 +647,23 @@ link (só aceita YouTube).
 
 Ver `testes/testar_trailer.py`.
 
+## Home do DarkMahou com layout novo (2026-10-07)
+
+O site redesenhou a home: a seção "Últimos lançamentos" deixou de ser
+`div.bixbox.latestdark` + `div.listupd` com `article.bs` e virou
+`section.dm-latest` com `article.dm-card` (20 cards; `a[href]` é a página do
+anime, `h3` o título, `span.dm-episode` o texto "EP NN", `img` a capa). O
+site respondia 200, mas `listar_ultimos_lancamentos` não achava a seção e
+`_alertas_de_site` avisava "home vazia".
+
+- `_lancamentos_layout_dm` tenta o layout novo primeiro; se a seção não existir
+  ou vier sem cards, o parser antigo roda como reserva (caso o site volte).
+- A seção "Novos Episódios" (`div.releases` + `article.bs.styletere`, 10 itens)
+  ainda usa a estrutura antiga, mas não foi usada: tem metade das vagas e
+  depende de achar o `listupd` certo entre vários da home.
+
+Ver `testes/testar_home_layout_dm.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
