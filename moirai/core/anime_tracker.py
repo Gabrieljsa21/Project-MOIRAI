@@ -32,10 +32,12 @@ Estrutura da página confirmada com scraping real em 2026-08-02 (ver mensagens d
 sessão - não documentado num site de doc oficial, o HTML pode mudar sem aviso, então
 todo parsing aqui é defensivo - devolve lista/None vazio em vez de lançar exceção pro
 chamador quando a estrutura não bate com o esperado):
-- Home (`https://darkmahou.io/`) tem uma seção "Últimos Lançamentos"
-  (`div.bixbox.latestdark`, seguida de `div.listupd`) com um `article.bs` por anime -
-  `.bsx > a[href]` é a URL da página do anime, `.ntitle` o título, `.epsx` o texto
-  "Episódio NN" do último episódio.
+- Home (`https://darkmahou.io/`) tem uma seção "Últimos lançamentos"
+  (desde 2026-10-07: `section.dm-latest` com um `article.dm-card` por anime -
+  `a[href]` é a URL da página do anime, `h3` o título, `.dm-episode` o texto
+  "EP NN" do último episódio). Layout antigo, mantido como reserva:
+  `div.bixbox.latestdark` seguida de `div.listupd`, um `article.bs` por anime
+  (`.ntitle` título, `.epsx` "Episódio NN").
 - Cada página de anime tem uma seção "Baixar {Título}" com um `div.soraddl` POR
   episódio (`<h3>Episódio NN</h3>` seguido de uma tabela) - cada LINHA da tabela é um
   grupo de fonte (legendado/dublado/etc.), cada `<a href="magnet:...">` dentro dela é
@@ -587,6 +589,31 @@ def backfill_temporadas_estreia():
     return preenchidos
 
 
+def _lancamentos_layout_dm(soup):
+    """Layout da home desde 2026-10-07 (a `div.latestdark` sumiu e a checagem
+    passou a ver a home vazia): `section.dm-latest` com um `article.dm-card`
+    por anime - `a[href]` é a página do anime, `h3` o título, `.dm-episode`
+    o texto "EP NN". Lista vazia se a seção não existir (cai no layout antigo)."""
+    secao = soup.find("section", class_="dm-latest")
+    if secao is None:
+        return []
+    itens = []
+    for card in secao.find_all("article", class_="dm-card"):
+        link = card.find("a", href=True)
+        titulo = card.find("h3")
+        episodio = card.find(class_="dm-episode")
+        capa_img = card.find("img", src=True)
+        if not link or not titulo:
+            continue
+        itens.append({
+            "titulo": titulo.get_text(strip=True),
+            "episodio": _numero_episodio_de_texto(episodio.get_text(strip=True)) if episodio else None,
+            "url": link["href"],
+            "capa_url": capa_img["src"] if capa_img else None,
+        })
+    return itens
+
+
 def listar_ultimos_lancamentos():
     """Scraping real da seção "Últimos Lançamentos" da home do DarkMahou - devolve
     [{"titulo", "episodio" (int ou None), "url"}, ...]. Lista vazia em qualquer falha
@@ -600,13 +627,16 @@ def listar_ultimos_lancamentos():
         return []
 
     soup = BeautifulSoup(html, "html.parser")
+    itens = _lancamentos_layout_dm(soup)
+    if itens:
+        return itens
+
     secao = soup.find("div", class_="latestdark")
     listupd = secao.find_next("div", class_="listupd") if secao else None
     if listupd is None:
         print(" [SISTEMA] DarkMahou: seção 'Últimos Lançamentos' não encontrada - o site pode ter mudado de layout.")
         return []
 
-    itens = []
     for artigo in listupd.find_all("article", class_="bs"):
         link = artigo.find("a", href=True)
         titulo_span = artigo.find("span", class_="ntitle")
@@ -2235,7 +2265,7 @@ def verificar_downloads_em_andamento():
                         _renomear_arquivo_via_api_qbittorrent(
                             cliente, torrents[0], arquivo_video, nome_novo, na_raiz=True)
                     else:
-                        os.rename(arquivo_video, caminho_novo)
+                        _renomear_episodio_avulso(cliente, torrents[0], arquivo_video, caminho_novo)
                     registro.setdefault("episodios_renomeado_em", {})[numero_episodio_str] = agora
                 else:
                     registro.setdefault("episodios_erro_renomear", {})[numero_episodio_str] = (
@@ -3171,6 +3201,31 @@ def _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, nome_
     pasta_relativa = "" if na_raiz else os.path.dirname(caminho_relativo_atual)
     caminho_relativo_novo = os.path.join(pasta_relativa, nome_novo) if pasta_relativa else nome_novo
     cliente.torrents_rename_file(torrent_hash=torrent.hash, old_path=caminho_relativo_atual, new_path=caminho_relativo_novo)
+
+
+# 🔥 2026-10-07, caso real Tensei Goblin dakedo Shitsumon Aru? E01: torrent em
+# 100% semeando com o arquivo aberto pelo qBittorrent - `os.rename` falhava
+# com WinError 32 a cada 30s e o episódio nunca virava "baixado". Pela API o
+# próprio qBittorrent renomeia o arquivo que ele mesmo segura. A API responde
+# antes do rename acontecer no disco, então espera o arquivo novo aparecer.
+_SEGUNDOS_ESPERA_RENAME_API = 10
+
+
+def _renomear_episodio_avulso(cliente, torrent, arquivo_video, caminho_novo):
+    """`os.rename` direto; se o arquivo estiver em uso (PermissionError, o
+    WinError 32 do Windows), renomeia pela API do qBittorrent. Lança exceção
+    se nenhum dos dois funcionar - o chamador registra e tenta de novo."""
+    try:
+        os.rename(arquivo_video, caminho_novo)
+        return
+    except PermissionError:
+        pass
+    _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, os.path.basename(caminho_novo))
+    limite = time.time() + _SEGUNDOS_ESPERA_RENAME_API
+    while not os.path.exists(caminho_novo):
+        if time.time() >= limite:
+            raise OSError(f"arquivo em uso e o qBittorrent não renomeou em {_SEGUNDOS_ESPERA_RENAME_API}s")
+        time.sleep(0.5)
 
 
 def renomear_por_hash_qbittorrent(dry_run=False, remover_da_lista_depois=True):

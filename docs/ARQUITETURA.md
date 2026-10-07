@@ -647,6 +647,42 @@ link (só aceita YouTube).
 
 Ver `testes/testar_trailer.py`.
 
+## Home do DarkMahou com layout novo (2026-10-07)
+
+O site redesenhou a home: a seção "Últimos lançamentos" deixou de ser
+`div.bixbox.latestdark` + `div.listupd` com `article.bs` e virou
+`section.dm-latest` com `article.dm-card` (20 cards; `a[href]` é a página do
+anime, `h3` o título, `span.dm-episode` o texto "EP NN", `img` a capa). O
+site respondia 200, mas `listar_ultimos_lancamentos` não achava a seção e
+`_alertas_de_site` avisava "home vazia".
+
+- `_lancamentos_layout_dm` tenta o layout novo primeiro; se a seção não existir
+  ou vier sem cards, o parser antigo roda como reserva (caso o site volte).
+- A seção "Novos Episódios" (`div.releases` + `article.bs.styletere`, 10 itens)
+  ainda usa a estrutura antiga, mas não foi usada: tem metade das vagas e
+  depende de achar o `listupd` certo entre vários da home.
+
+Ver `testes/testar_home_layout_dm.py`.
+
+## Rename de episódio com o arquivo em uso (2026-10-07)
+
+Torrent de episódio avulso terminado era renomeado com `os.rename`. Enquanto o
+qBittorrent semeia (principalmente com par conectado), ele mantém o arquivo
+aberto, e o Windows recusa o rename (WinError 32). O episódio ficava em
+`downloads_em_andamento` e o erro se repetia no log a cada volta do loop.
+
+- `_renomear_episodio_avulso` tenta `os.rename` primeiro (caminho de sempre,
+  síncrono). Só no `PermissionError` usa `_renomear_arquivo_via_api_qbittorrent`,
+  o mesmo do lote: o próprio qBittorrent renomeia o arquivo que segura.
+- A API responde antes do rename acontecer no disco, então a função espera até
+  `_SEGUNDOS_ESPERA_RENAME_API` (10s) o caminho novo existir. Se não aparecer,
+  lança exceção e o fluxo antigo de erro (registro em `episodios_erro_renomear`
+  e nova tentativa) continua valendo.
+- O caminho de renomear a biblioteca (`os.rename` em torrent já fora do
+  qBittorrent) não muda: lá ninguém segura o arquivo.
+
+Ver `testes/testar_renomear_arquivo_em_uso.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
