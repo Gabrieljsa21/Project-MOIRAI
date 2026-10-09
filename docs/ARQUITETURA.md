@@ -683,6 +683,27 @@ aberto, e o Windows recusa o rename (WinError 32). O episódio ficava em
 
 Ver `testes/testar_renomear_arquivo_em_uso.py`.
 
+## Página do anime com layout novo (2026-10-09)
+
+Dois dias depois da home, a "Central de downloads" da página do anime também
+mudou: `div.soraddl` (`h3` "Episódio NN" + tabela, uma `tr` por fonte) virou
+`details.dm-download-group` (`span.dm-download-title` + um `div.dm-resolution`
+por fonte, legendado primeiro e dublado depois; cada `a[href^=magnet]` dentro
+de `div.dm-hosts`). Todo episódio novo falhava com "nenhum magnet na página
+do anime" e a checagem avisava "Nenhum dos N downloads tentados deu certo".
+
+- Oito funções leem os blocos (opções do episódio, especiais, lotes, zips do
+  Yandex, pacote completo, link direto, maior episódio, hashes por
+  episódio). Em vez de mexer em todas, `_normalizar_blocos_download` reescreve
+  o layout novo no antigo (`details` -> `div.soraddl`, título -> `h3`,
+  `dm-resolution` -> `tr`) dentro de `_obter_html_darkmahou`, antes do cache.
+  Página sem `dm-download-group` passa intacta, então o layout antigo continua
+  funcionando se voltar.
+- O link traz `span[aria-hidden]` ("↗") e `.screen-reader-text` ("(abre em
+  nova aba)"), que entrariam no rótulo da opção; a normalização remove os dois.
+
+Ver `testes/testar_pagina_anime_layout_dm.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
