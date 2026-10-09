@@ -45,6 +45,9 @@ chamador quando a estrutura não bate com o esperado):
   Sempre pega a PRIMEIRA linha da tabela (legendado, a opção "padrão"/mais comum) -
   dublado fica de fora por padrão (não foi pedido, e a maioria dos releases mais
   rápidos/de melhor qualidade sai legendado primeiro).
+  Desde 2026-10-09 a página vem como `details.dm-download-group`
+  (`span.dm-download-title` + um `div.dm-resolution` por fonte);
+  _normalizar_blocos_download converte pro formato acima logo no download.
 """
 
 import hashlib
@@ -120,8 +123,38 @@ def _obter_html_darkmahou(url):
     resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_REQUEST)
     resp.raise_for_status()
     resp.encoding = "utf-8"
-    _cache_html[url] = (time.time(), resp.text)
-    return resp.text
+    html = _normalizar_blocos_download(resp.text)
+    _cache_html[url] = (time.time(), html)
+    return html
+
+
+def _normalizar_blocos_download(html):
+    """Reescreve a "Central de downloads" do layout de 2026-10-09 no formato
+    antigo, que todo o resto do módulo lê (`div.soraddl` com `h3` e uma
+    `tr` por linha de fonte).
+
+    🔥 2026-10-09, bug real (alerta "Nenhum dos 3 downloads tentados deu
+    certo"): a página do anime trocou `div.soraddl` > `h3` + tabela por
+    `details.dm-download-group` > `span.dm-download-title` + um
+    `div.dm-resolution` por fonte (legendado primeiro, dublado depois). Sem
+    bloco reconhecido, todo episódio novo caía em "nenhum magnet na página
+    do anime". Converter aqui, num lugar só, mantém os 8 leitores de bloco
+    (episódios, especiais, lotes, Yandex, pacote completo...) intactos."""
+    if "dm-download-group" not in html:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    for grupo in soup.find_all("details", class_="dm-download-group"):
+        grupo.name, grupo["class"] = "div", ["soraddl"]
+        titulo = grupo.find("span", class_="dm-download-title")
+        if titulo:
+            titulo.name = "h3"
+        for linha in grupo.find_all("div", class_="dm-resolution"):
+            linha.name = "tr"
+        # O rótulo do link ("1080p HEVC") vem com a seta e o texto de leitor
+        # de tela ("↗ (abre em nova aba)") - sairiam no rótulo da opção.
+        for extra in grupo.select("a span[aria-hidden], a .screen-reader-text"):
+            extra.decompose()
+    return str(soup)
 
 
 # 🔥 2026-09-24: a mesma página de anime era baixada 1x por episódio (12
