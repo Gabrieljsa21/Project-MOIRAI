@@ -171,20 +171,29 @@ PASTA_CAPAS = caminho_dados("anime_tracker_capas")
 # ======================================================
 # 📦 ESTADO PERSISTIDO
 # ======================================================
+# 🔥 2026-10-10: a gravação reescreve o arquivo no lugar, e uma leitura no
+# meio dela (rota GET da ponte, em outra thread) recebia JSON incompleto e
+# devolvia {} - a tela de animes da GAIA aparecia vazia. Só protege o acesso
+# ao arquivo; carregar -> alterar -> salvar continua com lock_estado_animes.
+_lock_arquivo_animes = threading.Lock()
+
+
 def _carregar_animes():
-    if not os.path.exists(ARQUIVO_ANIMES):
-        return {}
-    try:
-        with open(ARQUIVO_ANIMES, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    with _lock_arquivo_animes:
+        if not os.path.exists(ARQUIVO_ANIMES):
+            return {}
+        try:
+            with open(ARQUIVO_ANIMES, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
 
 
 def _salvar_animes(animes):
     os.makedirs(os.path.dirname(ARQUIVO_ANIMES), exist_ok=True)
-    with open(ARQUIVO_ANIMES, "w", encoding="utf-8") as f:
-        json.dump(animes, f, indent=4, ensure_ascii=False)
+    with _lock_arquivo_animes:
+        with open(ARQUIVO_ANIMES, "w", encoding="utf-8") as f:
+            json.dump(animes, f, indent=4, ensure_ascii=False)
 
 
 def obter_ultima_checagem_diaria():
