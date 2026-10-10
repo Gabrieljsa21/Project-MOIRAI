@@ -30,7 +30,7 @@ import mimetypes
 import os
 import threading
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from moirai import config
 from moirai.core import anime_tracker, inspiracao_anime
@@ -140,6 +140,13 @@ class _API(BaseHTTPRequestHandler):
             self._responder_404()
 
     def do_POST(self):
+        # Com uma thread por requisição (ver iniciar_servidor_api), as rotas
+        # que gravam continuam uma de cada vez, como antes, e também não
+        # colidem com os loops de main.py.
+        with anime_tracker.lock_estado_animes:
+            self._tratar_post()
+
+    def _tratar_post(self):
         caminho = self.path
 
         if caminho == "/anime/adicionar":
@@ -252,5 +259,14 @@ class _API(BaseHTTPRequestHandler):
 
 
 def iniciar_servidor_api():
-    servidor = HTTPServer((LOCAL_API_HOST, LOCAL_API_PORT), _API)
+    """🔥 2026-10-10, bug real ("às vezes, quando clico na tela do MOIRAI pela
+    GAIA, não carrega nada"): com `HTTPServer` a ponte atendia uma
+    requisição por vez. A checagem completa da GAIA (`/checagem_diaria`,
+    45 a 70 s) e o calendário AniList (~20 s com a AniList respondendo 429)
+    seguravam a fila, o `GET /anime/animes_rastreados` da tela estourava os
+    30 s do cliente e a lista vinha vazia. As rotas GET só leem (as duas que
+    gravam, checagem e trailer, já pegam `lock_estado_animes`); as POST
+    passam pelo lock em do_POST."""
+    servidor = ThreadingHTTPServer((LOCAL_API_HOST, LOCAL_API_PORT), _API)
+    servidor.daemon_threads = True
     servidor.serve_forever()

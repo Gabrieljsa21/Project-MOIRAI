@@ -704,6 +704,30 @@ do anime" e a checagem avisava "Nenhum dos N downloads tentados deu certo".
 
 Ver `testes/testar_pagina_anime_layout_dm.py`.
 
+## Ponte HTTP com uma thread por requisição (2026-10-10)
+
+Relato do usuário: às vezes a tela de animes da GAIA abria sem nada. A ponte
+usava `HTTPServer`, que atende uma requisição por vez. A GAIA chama
+`GET /checagem_diaria` 3 vezes por dia (45 a 70 s cada), e
+`GET /anime/estados_lancamento_anilist` leva ~20 s quando a AniList responde
+429. Nesse intervalo, o `GET /anime/animes_rastreados` da tela (feito na
+thread da interface, com 30 s de limite em `moirai_client._TIMEOUT`) ficava na
+fila, estourava o tempo e `obter_animes_rastreados` devolvia lista vazia.
+
+- `iniciar_servidor_api` usa `ThreadingHTTPServer` (`daemon_threads`). As rotas
+  GET só leem; as duas que gravam (checagem completa e trailer) já pegavam
+  `lock_estado_animes`.
+- `do_POST` roda a rota dentro de `lock_estado_animes`. Antes, as POST não
+  colidiam entre si só porque a fila era única; agora também não colidem com
+  os loops de downloads e manutenção de `main.py`.
+- `_salvar_animes` reescreve o arquivo no lugar. Uma leitura em outra thread
+  no meio da gravação pegava JSON incompleto e `_carregar_animes` devolvia
+  `{}`. As duas funções compartilham `_lock_arquivo_animes`, que protege só o
+  acesso ao arquivo (o ciclo carregar, alterar e salvar continua com
+  `lock_estado_animes`).
+
+Ver `testes/testar_ponte_http_concorrente.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
