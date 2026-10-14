@@ -7,6 +7,8 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-14
+
 ### Adicionado
 
 - **Trailer do anime (2026-10-03, pedido do usuário)**: `_trailer_da_pagina` lê o link do YouTube do botão "Trailer" da página do anime no DarkMahou (`a.trailerbutton`). Fica gravado em `trailer_url` ao adicionar por link e na consulta da página fora da home; quem não tem o campo é lido sob demanda por `obter_trailer` (com cache em memória). Rota nova `GET /anime/trailer/<chave>` (`{url, erro}`) para o botão "Trailer" do Painel da GAIA. `backfill_trailers` (loop de manutenção, até 10 por volta, páginas baixadas fora do lock) preenche o campo de quem ainda não tem, para o botão não esperar a página (~4s); `None` gravado conta como "sem trailer" e não refaz a busca. Coberto por `testes/testar_trailer.py`.
