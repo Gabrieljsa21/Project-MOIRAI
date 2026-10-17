@@ -140,7 +140,7 @@ def testar_numeracao_absoluta_aceita_quando_arquivo_pertence_ao_torrent():
     pasta = _preparar({"teste": _registro(downloads_em_andamento={"8": {"hash": HASH_A, "pasta": "x"}})})
     arquivo = os.path.join(pasta, "[Judas] Teste - S17E48.mkv")
     open(arquivo, "w").close()
-    cliente = _ClienteFalso(torrents={HASH_A: SimpleNamespace(progress=1.0, content_path=arquivo)},
+    cliente = _ClienteFalso(torrents={HASH_A: SimpleNamespace(progress=1.0, content_path=arquivo, save_path=pasta)},
                             arquivos={HASH_A: ["[Judas] Teste - S17E48.mkv"]})
     at._cliente_qbittorrent = lambda: cliente
     assert at.verificar_downloads_em_andamento() == 1
@@ -154,7 +154,7 @@ def testar_divergencia_fora_do_torrent_continua_travada_e_avisa_uma_vez(capsys=N
     pasta = _preparar({"teste": _registro(downloads_em_andamento={"8": {"hash": HASH_A, "pasta": "x"}})})
     arquivo = os.path.join(pasta, "Outro - S01E20.mkv")
     open(arquivo, "w").close()
-    cliente = _ClienteFalso(torrents={HASH_A: SimpleNamespace(progress=1.0, content_path=arquivo)},
+    cliente = _ClienteFalso(torrents={HASH_A: SimpleNamespace(progress=1.0, content_path=arquivo, save_path=pasta)},
                             arquivos={HASH_A: ["Teste - S01E08.mkv"]})
     at._cliente_qbittorrent = lambda: cliente
     at.verificar_downloads_em_andamento()

@@ -1,6 +1,8 @@
 """Teste isolado (sem qBittorrent real): episódio em 100% semeando com o
 arquivo aberto pelo qBittorrent (WinError 32 no `os.rename`) é renomeado pela
-API do qBittorrent e vira "baixado" (caso real 2026-10-07, Tensei Goblin E01)."""
+API do qBittorrent e vira "baixado" (caso real 2026-10-07, Tensei Goblin E01).
+Episódio avulso que veio numa pasta do torrent sai dela pra raiz de downloads
+(caso real 2026-10-16, Kyouran Reijou Nia Liston E02)."""
 import json
 import os
 import sys
@@ -81,6 +83,42 @@ def testar_api_que_nao_renomeia_mantem_em_acompanhamento():
     salvo = at._carregar_animes()["teste"]
     assert "1" in salvo["downloads_em_andamento"] and "1" in salvo["episodios_erro_renomear"], salvo
     assert cliente.removidos == []
+
+
+def testar_avulso_em_subpasta_vai_pra_raiz():
+    # Caso real 2026-10-16: "[FênixFansub] Kyouran Reijou Nia Liston - 02/"
+    # deixava o E02 renomeado escondido dentro da pasta do torrent.
+    pasta, _ = _preparar()
+    subpasta = os.path.join(pasta, "[FenixFansub] Tensei Goblin - 01")
+    os.makedirs(subpasta)
+    arquivo = os.path.join(subpasta, "[FenixFansub] Tensei Goblin - 01.mkv")
+    with open(arquivo, "wb") as f:
+        f.write(b"x")
+    cliente = _ClienteFalso(SimpleNamespace(hash=HASH, progress=1.0, save_path=pasta, content_path=subpasta))
+    at._cliente_qbittorrent = lambda: cliente
+    at.verificar_downloads_em_andamento()
+    assert os.path.exists(os.path.join(pasta, "Tensei Goblin dakedo Shitsumon Aru - S01E01.mkv"))
+    assert not os.path.exists(subpasta)
+    assert at._carregar_animes()["teste"]["episodios"]["1"] == "baixado"
+
+
+def testar_avulso_em_subpasta_em_uso_vai_pra_raiz_pela_api():
+    pasta, _ = _preparar()
+    subpasta = os.path.join(pasta, "[FenixFansub] Tensei Goblin - 01")
+    os.makedirs(subpasta)
+    arquivo = os.path.join(subpasta, "[FenixFansub] Tensei Goblin - 01.mkv")
+    with open(arquivo, "wb") as f:
+        f.write(b"x")
+    cliente = _ClienteFalso(SimpleNamespace(hash=HASH, progress=1.0, save_path=pasta, content_path=subpasta))
+    at._cliente_qbittorrent = lambda: cliente
+    at.os.rename = _rename_bloqueado
+    try:
+        at.verificar_downloads_em_andamento()
+    finally:
+        at.os.rename = _rename_real
+    assert cliente.renomeados == [(os.path.join("[FenixFansub] Tensei Goblin - 01", "[FenixFansub] Tensei Goblin - 01.mkv"),
+                                   "Tensei Goblin dakedo Shitsumon Aru - S01E01.mkv")], cliente.renomeados
+    assert not os.path.exists(subpasta)
 
 
 if __name__ == "__main__":

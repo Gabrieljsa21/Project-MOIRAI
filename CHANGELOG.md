@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-16
+
+### Corrigido
+
+- **Episódio baixado ficava escondido numa subpasta (2026-10-16, relato do usuário: "pq Kyouran Reijou Nia Liston n baixou os episodios tudo? Apenas o 1")**: torrent de um episódio só que vem com pasta (`[FênixFansub] Kyouran Reijou Nia Liston - 02/`) tinha o arquivo renomeado dentro dessa pasta, e não na raiz de `E:\Downloads` como os outros. O E02 estava baixado desde 13/10, mas não aparecia junto do E01. O episódio avulso agora vai para a raiz, como o lote já fazia, inclusive no rename pela API do qBittorrent, e a subpasta vazia é removida. Nia Liston E02 e Kanojo no Tomodachi E02 foram movidos na hora. Coberto por `testes/testar_renomear_arquivo_em_uso.py`.
+
 ## [0.2.0] - 2026-10-14
 
 ### Adicionado

@@ -2296,8 +2296,12 @@ def verificar_downloads_em_andamento():
             nome_novo = f"{_sanitizar_nome_arquivo(registro['titulo'])} - S{numero_temporada:02d}{parte_ep}{sufixo}{extensao}"
             # Lote sai da subpasta do torrent e vai pra raiz da pasta de
             # downloads, junto dos outros episódios (2026-09-24, pedido do
-            # usuário: "ficarem tudo em downloads com os outros").
-            pasta_final = torrents[0].save_path if info.get("lote") else os.path.dirname(arquivo_video)
+            # usuário: "ficarem tudo em downloads com os outros"). Episódio
+            # avulso também: torrent de um episódio só às vezes vem com pasta
+            # ("[FênixFansub] Kyouran Reijou Nia Liston - 02/", 2026-10-16)
+            # e o arquivo ficava escondido nela.
+            pasta_final = torrents[0].save_path if (
+                info.get("lote") or _dentro_da_pasta(arquivo_video, torrents[0].save_path)) else os.path.dirname(arquivo_video)
             caminho_novo = os.path.join(pasta_final, nome_novo)
             try:
                 if not os.path.exists(caminho_novo):
@@ -2355,7 +2359,7 @@ def verificar_downloads_em_andamento():
             registro.setdefault("episodios_removido_qbittorrent_em", {})[numero_episodio_str] = agora
         except Exception as e:
             print(f" [SISTEMA] Erro ao remover {registro['titulo']} Episódio {numero_episodio_str} da lista do qBittorrent: {e}")
-        if info.get("lote"):
+        if arquivo_video:
             _remover_subpastas_vazias_do_lote(torrents[0].save_path, arquivo_video)
 
     if mudou:
@@ -3211,13 +3215,17 @@ def _extrair_hashes_por_episodio(url_anime):
     return resultado
 
 
+def _dentro_da_pasta(caminho, pasta_base):
+    base = os.path.normcase(os.path.abspath(pasta_base))
+    return os.path.normcase(os.path.abspath(caminho)).startswith(base + os.sep)
+
+
 def _remover_subpastas_vazias_do_lote(pasta_base, arquivo_original):
-    """Tira as subpastas do lote que ficaram vazias depois de os episódios
-    irem pra raiz. `os.rmdir` só remove pasta vazia: qualquer arquivo que
+    """Tira as subpastas do torrent (lote ou avulso) que ficaram vazias
+    depois de os episódios irem pra raiz. `os.rmdir` só remove pasta vazia: qualquer arquivo que
     sobrar (episódio não pedido, legenda) mantém a pasta, nunca é apagado."""
     pasta = os.path.dirname(arquivo_original)
-    base = os.path.normcase(os.path.abspath(pasta_base))
-    while os.path.normcase(os.path.abspath(pasta)).startswith(base + os.sep):
+    while _dentro_da_pasta(pasta, pasta_base):
         try:
             os.rmdir(pasta)
         except OSError:
@@ -3262,7 +3270,9 @@ def _renomear_episodio_avulso(cliente, torrent, arquivo_video, caminho_novo):
         return
     except PermissionError:
         pass
-    _renomear_arquivo_via_api_qbittorrent(cliente, torrent, arquivo_video, os.path.basename(caminho_novo))
+    _renomear_arquivo_via_api_qbittorrent(
+        cliente, torrent, arquivo_video, os.path.basename(caminho_novo),
+        na_raiz=True)  # o chamador já põe caminho_novo na raiz de save_path
     limite = time.time() + _SEGUNDOS_ESPERA_RENAME_API
     while not os.path.exists(caminho_novo):
         if time.time() >= limite:

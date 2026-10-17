@@ -728,6 +728,27 @@ fila, estourava o tempo e `obter_animes_rastreados` devolvia lista vazia.
 
 Ver `testes/testar_ponte_http_concorrente.py`.
 
+## Episódio avulso que vem numa pasta do torrent (2026-10-16)
+
+Relato do usuário: só o E01 de Kyouran Reijou Nia Liston aparecia, embora o
+MOIRAI tivesse marcado E01 e E02 como baixados. O torrent da FênixFansub para
+um episódio só vem com pasta (`[FênixFansub] Kyouran Reijou Nia Liston - 02/`).
+O lote já saía da subpasta desde 2026-09-24, mas o episódio avulso era
+renomeado na pasta onde estava (`os.path.dirname(arquivo_video)`) e ficava
+escondido nela. O mesmo aconteceu com Kanojo no Tomodachi E02.
+
+- `pasta_final` passa a ser `save_path` também para o avulso, sempre que o
+  arquivo está dentro dele (`_dentro_da_pasta`).
+- Na volta pela API (arquivo em uso), `_renomear_episodio_avulso` chama
+  `_renomear_arquivo_via_api_qbittorrent` com `na_raiz=True`, para o
+  qBittorrent também tirar o arquivo da subpasta.
+- `_remover_subpastas_vazias_do_lote` roda para lote e avulso depois de tirar o
+  torrent da lista. Só remove pasta vazia; legenda ou outro arquivo mantém a
+  pasta.
+- Os dois episódios já baixados foram movidos para `E:\Downloads` na hora.
+
+Ver `testes/testar_renomear_arquivo_em_uso.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
