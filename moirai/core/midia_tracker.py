@@ -23,6 +23,7 @@ import html as html_lib
 import json
 import os
 import re
+import shutil
 import threading
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
@@ -330,12 +331,14 @@ def temporada_do_registro(registro):
 
 
 def pasta_destino(registro):
-    """Série: `<pasta de séries>\\<Série>\\Temporada N`; filme: a raiz da
-    pasta de filmes."""
+    """Série: `<pasta de séries>\\<Série>`, todas as temporadas juntas (o
+    SxxEyy no nome separa); filme: a raiz da pasta de filmes. Sem pasta por
+    temporada desde 2026-10-17, pedido do usuário: "acho desnecessario ter
+    esse tanto de pasta, so quero o video"."""
     if registro.get("tipo") == "serie":
         nome = at._sanitizar_nome_arquivo(titulo_base_serie(registro["titulo"]))
-        return os.path.join(obter_midia_pasta_series(), nome, f"Temporada {temporada_do_registro(registro)}")
-    return obter_midia_pasta_filmes()
+        return os.path.normpath(os.path.join(obter_midia_pasta_series(), nome))
+    return os.path.normpath(obter_midia_pasta_filmes())
 
 
 def _parte_episodios(episodios):
@@ -656,6 +659,24 @@ def _concluir(cliente, registro, ident, info, torrent):
     return True
 
 
+def _apagar_sobras(torrent):
+    """Apaga a pasta que o torrent criou dentro da pasta de destino depois que
+    o vídeo saiu dela (2026-10-17, pedido do usuário: "so quero o video... o
+    resto pode ser excluido"). O que sobra é propaganda do release (`.url`,
+    `.png`, `.nfo`). Nunca apaga se ainda houver algum vídeo dentro, nem nada
+    fora da pasta de destino."""
+    pasta = torrent.content_path
+    if not pasta or not os.path.isdir(pasta) or not at._dentro_da_pasta(pasta, torrent.save_path):
+        return
+    for _raiz, _pastas, arquivos in os.walk(pasta):
+        if any(nome.lower().endswith(at.EXTENSOES_VIDEO) for nome in arquivos):
+            return
+    try:
+        shutil.rmtree(pasta)
+    except OSError as e:
+        print(f" [SISTEMA] Não consegui apagar as sobras em {pasta}: {e}")
+
+
 def verificar_downloads():
     """Concluído -> renomeia, marca "baixado" e tira da lista do
     qBittorrent (`delete_files=False`, nunca apaga arquivo). Sem progresso
@@ -683,6 +704,16 @@ def verificar_downloads():
                 print(f" [SISTEMA] Erro ao consultar torrent {info['hash']}: {e}")
                 continue
             torrent = torrents[0] if torrents else None
+            destino = pasta_destino(registro)
+            if torrent is not None and os.path.normcase(os.path.normpath(torrent.save_path)) != os.path.normcase(destino):
+                # Pasta mudou (config ou regra nova): o qBittorrent move os
+                # arquivos; a conclusão espera a próxima volta.
+                try:
+                    cliente.torrents_set_location(location=destino, torrent_hashes=info["hash"])
+                    info["pasta"] = destino
+                except Exception as e:
+                    print(f" [SISTEMA] Erro ao mover {_rotulo_ident(registro, ident)} para {destino}: {e}")
+                continue
             if torrent is None or torrent.progress < 1.0:
                 if torrent is not None and torrent.progress > info.get("progresso", 0.0):
                     info["progresso"] = torrent.progress
@@ -709,6 +740,7 @@ def verificar_downloads():
                 cliente.torrents_delete(delete_files=False, torrent_hashes=info["hash"])
             except Exception as e:
                 print(f" [SISTEMA] Erro ao tirar {_rotulo_ident(registro, ident)} da lista do qBittorrent: {e}")
+            _apagar_sobras(torrent)
         for chave, ident, info in travados:
             _tratar_travado(cliente, chave, titulos[chave], ident, info)
         _salvar(titulos)

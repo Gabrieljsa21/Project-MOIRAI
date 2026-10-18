@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-17
+
+### Alterado
+
+- **Séries: vídeo direto na pasta da série e sobras do torrent apagadas (2026-10-17, pedido do usuário: "acho desnecessario ter esse tanto de pasta, so quero o video, e ele poderia ficar direto em E:\Downloads\Series\A Casa do Dragão, o resto pode ser excluido")**: `pasta_destino` deixou de criar `Temporada N`; o vídeo fica em `E:\Downloads\Series\<Série>\<Série> - SxxEyy.ext` (o SxxEyy separa as temporadas). Depois de concluir e tirar o torrent do qBittorrent, `_apagar_sobras` apaga a pasta que o torrent criou (propaganda do release: `.url`, `.png`), só se não sobrar nenhum vídeo dentro e só dentro da pasta de destino. Vale também para filmes. Download que começou na pasta antiga é movido pelo próprio qBittorrent (`torrents_set_location`) na volta seguinte do loop. Os arquivos que já tinham sido baixados em `Temporada N` foram movidos na hora. Coberto por `testes/testar_midia_tracker.py`.
+
 ## [0.3.1] - 2026-10-17
 
 ### Corrigido
