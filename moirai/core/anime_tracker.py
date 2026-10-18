@@ -48,6 +48,8 @@ chamador quando a estrutura não bate com o esperado):
   Desde 2026-10-09 a página vem como `details.dm-download-group`
   (`span.dm-download-title` + um `div.dm-resolution` por fonte);
   _normalizar_blocos_download converte pro formato acima logo no download.
+  Desde 2026-10-18 o link de cada opção é do encurtador otakufilmes.org, não o
+  magnet; _resolver_opcoes_encurtadas troca pelo magnet.
 """
 
 import hashlib
@@ -63,6 +65,7 @@ import unicodedata
 import urllib.parse
 import winreg
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from xml.etree import ElementTree
@@ -86,6 +89,7 @@ URL_BASE = "https://darkmahou.io"
 ARQUIVO_ANIMES = caminho_dados("anime_tracker_animes.json")
 ARQUIVO_CHECAGEM_DIARIA = caminho_dados("anime_tracker_checagem_diaria.json")
 ARQUIVO_HISTORICO_CHECAGENS = caminho_dados("anime_tracker_historico_checagens.json")
+ARQUIVO_LINKS_ENCURTADOS = caminho_dados("anime_tracker_links_encurtados.json")
 # ~6 meses com a checagem por intervalo da GAIA (algumas por dia) - só pra o
 # arquivo não crescer pra sempre.
 _LIMITE_HISTORICO_CHECAGENS = 1000
@@ -1001,7 +1005,9 @@ def _opcao_sem_censura(rotulo, magnet):
 # fluxo depende do hash (acompanhamento, magnets tentados), então o .torrent é
 # baixado aqui, uma vez por processo, e o hash sai do SHA-1 do dicionário
 # `info`, como no próprio BitTorrent.
-_PADRAO_LINK_DOWNLOAD = re.compile(r"^magnet:|\.torrent(?:$|\?)", re.IGNORECASE)
+_PADRAO_LINK_DOWNLOAD = re.compile(
+    r"^magnet:|\.torrent(?:$|\?)|^https?://(?:www\.)?otakufilmes\.org/encurtar/redirect\.php\?",
+    re.IGNORECASE)
 _cache_torrents = {}
 _SEGUNDOS_CACHE_FALHA_TORRENT = 3600
 
@@ -1092,6 +1098,96 @@ def _get_nyaa_com_espelho(url, params):
                 raise
             _nyaa_si_fora_ate[0] = time.time() + _SEGUNDOS_NYAA_FORA
             print(f" [SISTEMA] nyaa.si sem resposta - usando {_ESPELHO_NYAA} pelos próximos {_SEGUNDOS_NYAA_FORA // 60} min.")
+
+
+# ======================================================
+# 🔗 MAGNET ATRÁS DO ENCURTADOR (otakufilmes.org)
+# ======================================================
+# 🔥 2026-10-18, bug real (alerta "Nenhum dos 5 downloads tentados deu
+# certo", Magical Explorer E04 e mais 4): o DarkMahou trocou o magnet de
+# cada opção por `otakufilmes.org/encurtar/redirect.php?id=...`. O encurtador
+# tem duas etapas com 15s de contagem cada (a segunda página traz o token
+# `flow`) e só então `POST ?action=resolve` devolve
+# `{"success": true, "url": "magnet:..."}`; antes disso responde
+# `{"error": "countdown_pending", "retry_after": N}`. Cerca de 32s por link,
+# então o resultado fica em disco (o `id` de um link não muda) e só as
+# opções do episódio pedido são resolvidas, em paralelo.
+_PADRAO_LINK_ENCURTADO = re.compile(r"^https?://(?:www\.)?otakufilmes\.org/encurtar/redirect\.php\?", re.IGNORECASE)
+_SEGUNDOS_CONTAGEM_ENCURTADOR = 16
+_TENTATIVAS_RESOLVER_ENCURTADOR = 4
+_lock_links_encurtados = threading.Lock()
+_falhas_encurtador = {}
+
+
+def _carregar_links_encurtados():
+    try:
+        with open(ARQUIVO_LINKS_ENCURTADOS, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _magnet_encurtado_em_cache(url):
+    with _lock_links_encurtados:
+        return _carregar_links_encurtados().get(url)
+
+
+def _resolver_link_encurtado(url):
+    """Magnet por trás de um link do encurtador, ou None em qualquer falha
+    (a falha fica em cache por `_SEGUNDOS_CACHE_FALHA_TORRENT`)."""
+    em_cache = _magnet_encurtado_em_cache(url)
+    if em_cache:
+        return em_cache
+    if time.time() - _falhas_encurtador.get(url, 0) < _SEGUNDOS_CACHE_FALHA_TORRENT:
+        return None
+    try:
+        sessao = requests.Session()
+        sessao.headers["User-Agent"] = USER_AGENT
+        sessao.get(url, timeout=_TIMEOUT_REQUEST).raise_for_status()
+        time.sleep(_SEGUNDOS_CONTAGEM_ENCURTADOR)
+        url_etapa2 = f"{url}&step=download&site="
+        resp = sessao.get(url_etapa2, timeout=_TIMEOUT_REQUEST)
+        resp.raise_for_status()
+        flow = re.search(r'flow:"([0-9a-f]+)"', resp.text)
+        if not flow:
+            raise RuntimeError("segunda etapa sem token flow")
+        for _ in range(_TENTATIVAS_RESOLVER_ENCURTADOR):
+            time.sleep(_SEGUNDOS_CONTAGEM_ENCURTADOR)
+            dados = sessao.post(f"{url_etapa2}&action=resolve", data={"flow": flow.group(1)},
+                                timeout=_TIMEOUT_REQUEST).json()
+            if dados.get("success") and str(dados.get("url", "")).startswith("magnet:"):
+                break
+            if dados.get("error") != "countdown_pending":
+                raise RuntimeError(dados.get("error") or "resposta sem magnet")
+        else:
+            raise RuntimeError("contagem não terminou")
+    except Exception as e:
+        print(f" [SISTEMA] Encurtador sem magnet ({url}): {e}")
+        _falhas_encurtador[url] = time.time()
+        return None
+    with _lock_links_encurtados:
+        links = _carregar_links_encurtados()
+        links[url] = dados["url"]
+        os.makedirs(os.path.dirname(ARQUIVO_LINKS_ENCURTADOS), exist_ok=True)
+        with open(ARQUIVO_LINKS_ENCURTADOS, "w", encoding="utf-8") as f:
+            json.dump(links, f, indent=4, ensure_ascii=False)
+    return dados["url"]
+
+
+def _resolver_opcoes_encurtadas(opcoes):
+    """Troca o link do encurtador de cada opção pelo magnet; opção que não
+    resolve sai da lista. Opções sem encurtador passam intactas."""
+    encurtadas = [o[1] for o in opcoes if _PADRAO_LINK_ENCURTADO.match(o[1])]
+    if not encurtadas:
+        return opcoes
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        magnets = dict(zip(encurtadas, executor.map(_resolver_link_encurtado, encurtadas)))
+    resolvidas = []
+    for opcao in opcoes:
+        link = magnets.get(opcao[1], opcao[1])
+        if link:
+            resolvidas.append((opcao[0], link, *opcao[2:]))
+    return resolvidas
 
 
 def _nome_da_opcao(link):
@@ -1374,6 +1470,12 @@ def _intervalo_do_lote(titulo_bloco):
 
 
 def _extrair_opcoes_download(url_anime, numero_episodio):
+    """_opcoes_download_na_pagina com o link do encurtador já trocado pelo
+    magnet (ver _resolver_link_encurtado)."""
+    return _resolver_opcoes_encurtadas(_opcoes_download_na_pagina(url_anime, numero_episodio))
+
+
+def _opcoes_download_na_pagina(url_anime, numero_episodio):
     """Baixa a página do anime e devolve [(rotulo, magnet, lote), ...] da
     PRIMEIRA linha (legendado) do bloco do episódio pedido. Lista vazia se a
     página/episódio não for encontrado - nunca lança exceção.
@@ -1804,7 +1906,7 @@ def _opcoes_pacote_completo(soup):
         linha = bloco.find("tr")
         for a in (linha.find_all("a", href=_PADRAO_LINK_DOWNLOAD) if linha else []):
             opcoes.append((f"{a.get_text(strip=True)} ({texto})", a["href"], None))
-    return opcoes
+    return _resolver_opcoes_encurtadas(opcoes)
 
 
 def _baixar_pacote_completo(chave, registro):
@@ -3214,8 +3316,11 @@ def _extrair_hashes_por_episodio(url_anime):
         if numero_episodio is None:
             continue
         hashes = set()
-        for a in bloco.find_all("a", href=re.compile(r"^magnet:")):
-            m = re.search(r"btih:([a-fA-F0-9]{40})", a["href"])
+        for a in bloco.find_all("a", href=_PADRAO_LINK_DOWNLOAD):
+            # Encurtador: só o que já foi resolvido (resolver todos levaria
+            # 32s por link da página).
+            link = _magnet_encurtado_em_cache(a["href"]) if _PADRAO_LINK_ENCURTADO.match(a["href"]) else a["href"]
+            m = re.search(r"btih:([a-fA-F0-9]{40})", link or "")
             if m:
                 hashes.add(m.group(1).lower())
         if hashes:
