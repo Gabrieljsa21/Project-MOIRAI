@@ -18,6 +18,7 @@ de verdade.
 Estado em `data/midia_tracker_titulos.json`, separado do dos animes, com
 lock próprio (`lock_estado_midia`) - a checagem de séries e filmes não
 segura a fila dos animes nem o contrário."""
+import base64
 import html as html_lib
 import json
 import os
@@ -164,7 +165,12 @@ def listar_lancamentos_home():
 
 
 _PADRAO_SUFIXO_TITULO = re.compile(r"\s+Torrent\b.*$", re.IGNORECASE)
-_PADRAO_EPISODIO = re.compile(r"\bEp\.?\s*0*(\d{1,3})\b|Epis[oó]dio\s*0*(\d{1,3})|\bS\d{1,2}E0*(\d{1,3})\b", re.IGNORECASE)
+# "Ep.01", "Episódio 10 Final", "S01E03" e, num torrent só, "Ep. 01 e 02",
+# "Episódios 01 a 03", "Ep.01/03", "S01E01-02" (caso real VisionQuest, 2026-10-17).
+_PADRAO_EPISODIO = re.compile(
+    r"(?:\bEp\.?|Epis[oó]dios?|\bS\d{1,2}E)\s*0*(\d{1,3})\b"
+    r"(?:\s*(e|a|ao|&|,|-|~|/)\s*E?0*(\d{1,3})\b)?", re.IGNORECASE)
+_SEPARADORES_LISTA = ("e", "&", ",")
 _PADRAO_TEMPORADA_ROTULO = re.compile(r"\bS(\d{1,2})(?=[.E\s|]|$)", re.IGNORECASE)
 _PADRAO_TEMPORADA_TITULO = re.compile(r"(\d+)ª\s*Temporada", re.IGNORECASE)
 _PADRAO_CAM = re.compile(r"\bCAM\b|CAMRip|HDCAM|\bTS\b|HDTS|tele\s*sync|tene\s*sync", re.IGNORECASE)
@@ -197,6 +203,14 @@ def interpretar_rotulo(rotulo):
     for filme ou pacote da temporada), temporada, resolução, nível de
     áudio, se é gravação de cinema e tamanho em GB."""
     m_ep = _PADRAO_EPISODIO.search(rotulo)
+    episodios = []
+    if m_ep:
+        inicio = int(m_ep.group(1))
+        fim = int(m_ep.group(3)) if m_ep.group(3) else inicio
+        if m_ep.group(3) and m_ep.group(2).lower() in _SEPARADORES_LISTA:
+            episodios = sorted({inicio, fim})
+        else:
+            episodios = list(range(inicio, max(inicio, fim) + 1))
     m_temp = _PADRAO_TEMPORADA_ROTULO.search(rotulo)
     m_tam = _PADRAO_TAMANHO.search(rotulo)
     tamanho_gb = None
@@ -205,13 +219,30 @@ def interpretar_rotulo(rotulo):
         tamanho_gb = valor if m_tam.group(2).upper() == "GB" else valor / 1024
     return {
         "rotulo": rotulo,
-        "episodio": int(next(g for g in m_ep.groups() if g)) if m_ep else None,
+        "episodio": episodios[0] if episodios else None,
+        "episodios": episodios,
         "temporada": int(m_temp.group(1)) if m_temp else None,
         "resolucao": _resolucao(rotulo),
         "audio": _nivel_audio(rotulo),
         "cam": bool(_PADRAO_CAM.search(rotulo)),
         "tamanho_gb": tamanho_gb,
     }
+
+
+def hash_do_magnet(magnet):
+    """Hash do magnet em hexadecimal minúsculo, o formato que o qBittorrent
+    devolve. Aceita também o hash em base32 (32 caracteres), que o site usa
+    em parte dos magnets (caso real VisionQuest, 2026-10-17: o MOIRAI dava
+    "todas as opções da página já travaram ou não abriram")."""
+    m = re.search(r"btih:([A-Za-z0-9]+)", magnet or "")
+    if not m:
+        return None
+    valor = m.group(1)
+    if re.fullmatch(r"[0-9a-fA-F]{40}", valor):
+        return valor.lower()
+    if re.fullmatch(r"[A-Za-z2-7]{32}", valor):
+        return base64.b32decode(valor.upper()).hex()
+    return None
 
 
 def chave_qualidade(opcao):
@@ -285,11 +316,18 @@ def pasta_destino(registro):
     return obter_midia_pasta_filmes()
 
 
-def nome_final(registro, ident, extensao, episodio=None):
+def _parte_episodios(episodios):
+    """[1] -> "E01"; [1, 2] -> "E01-E02"."""
+    if len(episodios) > 1:
+        return f"E{episodios[0]:02d}-E{episodios[-1]:02d}"
+    return f"E{episodios[0]:02d}"
+
+
+def nome_final(registro, ident, extensao, episodios=None):
     if registro.get("tipo") == "serie":
         base = at._sanitizar_nome_arquivo(titulo_base_serie(registro["titulo"]))
-        numero = episodio if episodio is not None else int(ident)
-        return f"{base} - S{temporada_do_registro(registro):02d}E{numero:02d}{extensao}"
+        parte = _parte_episodios(episodios or episodios_do_ident(ident))
+        return f"{base} - S{temporada_do_registro(registro):02d}{parte}{extensao}"
     return f"{at._sanitizar_nome_arquivo(registro['titulo'])}{extensao}"
 
 
@@ -298,6 +336,17 @@ def nome_final(registro, ident, extensao, episodio=None):
 # ======================================================
 def _status(registro, ident):
     return registro.get("episodios", {}).get(str(ident))
+
+
+def episodios_do_ident(ident):
+    """"3" -> [3]; "1-2" (um torrent com dois episódios) -> [1, 2];
+    filme e pacote -> []."""
+    partes = str(ident).split("-")
+    return [int(p) for p in partes] if all(p.isdigit() for p in partes) else []
+
+
+def _ident_de_episodios(episodios):
+    return "-".join(str(n) for n in episodios)
 
 
 def _idents_a_baixar(registro, opcoes):
@@ -310,20 +359,32 @@ def _idents_a_baixar(registro, opcoes):
         if boas and _status(registro, IDENT_FILME) != "baixado" and IDENT_FILME not in em_andamento:
             return {IDENT_FILME: boas}
         return {}
-    por_episodio = {}
+    por_ident = {}
     for opcao in boas:
-        if opcao["episodio"] is not None:
-            por_episodio.setdefault(str(opcao["episodio"]), []).append(opcao)
-    if not por_episodio:
-        pacotes = [o for o in boas if o["episodio"] is None]
+        if opcao["episodios"]:
+            por_ident.setdefault(_ident_de_episodios(opcao["episodios"]), []).append(opcao)
+    if not por_ident:
+        pacotes = [o for o in boas if not o["episodios"]]
         if pacotes and _status(registro, IDENT_PACOTE) != "baixado" and IDENT_PACOTE not in em_andamento:
             return {IDENT_PACOTE: pacotes}
         return {}
-    em_pacote = IDENT_PACOTE in em_andamento or _status(registro, IDENT_PACOTE) == "baixado"
-    return {
-        ep: lista for ep, lista in por_episodio.items()
-        if not em_pacote and _status(registro, ep) != "baixado" and ep not in em_andamento
-    }
+    if IDENT_PACOTE in em_andamento or _status(registro, IDENT_PACOTE) == "baixado":
+        return {}
+    # Já baixado ou baixando, inclusive dentro de um torrent de vários episódios.
+    cobertos = {int(n) for n, s in registro.get("episodios", {}).items()
+                if n.isdigit() and s in ("baixado", "conflito_qbittorrent")}
+    for ident in em_andamento:
+        cobertos.update(episodios_do_ident(ident))
+    com_opcao_propria = {episodios_do_ident(i)[0] for i in por_ident if len(episodios_do_ident(i)) == 1}
+    resultado = {}
+    for ident, lista in por_ident.items():
+        faltando = [n for n in episodios_do_ident(ident) if n not in cobertos]
+        if not faltando:
+            continue
+        if len(episodios_do_ident(ident)) > 1 and all(n in com_opcao_propria for n in faltando):
+            continue  # cada episódio que falta tem botão próprio: baixa um por um
+        resultado[ident] = lista
+    return resultado
 
 
 def _rotulo_ident(registro, ident):
@@ -331,7 +392,7 @@ def _rotulo_ident(registro, ident):
         return registro["titulo"]
     if ident == IDENT_PACOTE:
         return f"{registro['titulo']} (temporada completa)"
-    return f"{titulo_base_serie(registro['titulo'])} S{temporada_do_registro(registro):02d}E{int(ident):02d}"
+    return f"{titulo_base_serie(registro['titulo'])} S{temporada_do_registro(registro):02d}{_parte_episodios(episodios_do_ident(ident))}"
 
 
 def _proxima_opcao(registro, ident, opcoes, url_pagina):
@@ -340,7 +401,7 @@ def _proxima_opcao(registro, ident, opcoes, url_pagina):
     tentados = set(registro.get("magnets_tentados", {}).get(str(ident), []))
     for opcao in sorted(opcoes, key=chave_qualidade, reverse=True):
         magnet = resolver_magnet(opcao["link"], url_pagina)
-        hash_torrent = at._hash_do_magnet(magnet)
+        hash_torrent = hash_do_magnet(magnet)
         if hash_torrent and hash_torrent not in tentados:
             return opcao, magnet, hash_torrent
     return None
@@ -358,7 +419,8 @@ def _disparar(cliente, registro, ident, escolha):
     try:
         cliente.torrents_add(urls=magnet, save_path=pasta, category=CATEGORIA_QBITTORRENT)
     except qbittorrentapi.Conflict409Error:
-        registro.setdefault("episodios", {})[str(ident)] = "conflito_qbittorrent"
+        for marcado in [str(ident)] + [str(n) for n in episodios_do_ident(ident)]:
+            registro.setdefault("episodios", {})[marcado] = "conflito_qbittorrent"
         return None, "o torrent já estava no qBittorrent (baixado por fora)"
     except Exception as e:
         return None, f"erro no qBittorrent: {e}"
@@ -368,7 +430,8 @@ def _disparar(cliente, registro, ident, escolha):
         "progresso": 0.0, "progresso_em": agora,
     }
     registro.setdefault("download_disparado_em", {})[str(ident)] = f"{agora} ({hash_torrent})"
-    registro.get("falhas_download", {}).pop(str(ident), None)
+    for limpo in [str(ident)] + [str(n) for n in episodios_do_ident(ident)]:
+        registro.get("falhas_download", {}).pop(limpo, None)
     return opcao["rotulo"], None
 
 
@@ -377,7 +440,7 @@ def _atualizar_da_pagina(registro, pagina):
     registro["capa_url"] = registro.get("capa_url") or pagina["capa_url"]
     registro["trailer_url"] = pagina["trailer_url"] or registro.get("trailer_url")
     registro["consultado_em"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-    episodios = sorted({o["episodio"] for o in pagina["opcoes"] if o["episodio"] is not None})
+    episodios = sorted({n for o in pagina["opcoes"] for n in o["episodios"]})
     registro["episodios_no_site"] = episodios
     boas = [o for o in pagina["opcoes"] if not o["cam"]]
     registro["so_cam"] = bool(pagina["opcoes"]) and not boas
@@ -396,7 +459,7 @@ def _baixar_pendentes(cliente, chave, registro):
     _atualizar_da_pagina(registro, pagina)
     disparados, falhas = [], []
     for ident, opcoes in sorted(_idents_a_baixar(registro, pagina["opcoes"]).items(),
-                                key=lambda par: int(par[0]) if par[0].isdigit() else 0):
+                                key=lambda par: (episodios_do_ident(par[0]) or [0])[0]):
         escolhida, motivo = _disparar(cliente, registro, ident, _proxima_opcao(registro, ident, opcoes, registro["url"]))
         rotulo = _rotulo_ident(registro, ident)
         if escolhida:
@@ -529,23 +592,30 @@ def formatar_texto_disparados(disparados):
 # ======================================================
 # ⏱️ DOWNLOADS EM ANDAMENTO (loop de ~30s do main.py)
 # ======================================================
+_PADRAO_SXXEXX_ARQUIVO = re.compile(r"S\d{1,2}E(\d{1,3})(?:-?E?(\d{1,3}))?(?!\d)", re.IGNORECASE)
+
+
 def _concluir(cliente, registro, ident, info, torrent):
     """Renomeia o(s) vídeo(s) para o nome final na pasta de destino. True se
     deu certo; False mantém o download em acompanhamento (tenta de novo)."""
     agora = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if ident == IDENT_PACOTE:
+    if ident == IDENT_PACOTE or len(episodios_do_ident(ident)) > 1:
+        # Vários episódios: cada vídeo é renomeado pelo SxxEyy do próprio nome
+        # (um arquivo "S01E01-02" com os dois juntos vira "S01E01-E02").
         renomeados = 0
         for arquivo in cliente.torrents_files(torrent_hash=info["hash"]):
             caminho = os.path.join(torrent.save_path, arquivo.name)
-            m = at._PADRAO_EPISODIO_SXXEXX.search(os.path.basename(arquivo.name))
+            m = _PADRAO_SXXEXX_ARQUIVO.search(os.path.basename(arquivo.name))
             if not m or not caminho.lower().endswith(at.EXTENSOES_VIDEO) or not os.path.exists(caminho):
                 continue
-            episodio = int(m.group(2))
-            destino = os.path.join(torrent.save_path, nome_final(registro, ident, os.path.splitext(caminho)[1], episodio))
+            inicio = int(m.group(1))
+            episodios = list(range(inicio, max(inicio, int(m.group(2) or inicio)) + 1))
+            destino = os.path.join(torrent.save_path, nome_final(registro, ident, os.path.splitext(caminho)[1], episodios))
             if not os.path.exists(destino):
                 at._renomear_episodio_avulso(cliente, torrent, caminho, destino)
                 at._remover_subpastas_vazias_do_lote(torrent.save_path, caminho)
-            registro.setdefault("episodios", {})[str(episodio)] = "baixado"
+            for n in episodios:
+                registro.setdefault("episodios", {})[str(n)] = "baixado"
             renomeados += 1
         if not renomeados:
             registro.setdefault("erro_renomear", {})[ident] = f"{agora}: nenhum vídeo com SxxEyy no nome"
@@ -606,7 +676,8 @@ def verificar_downloads():
                 registro.setdefault("erro_renomear", {})[ident] = f"{agora:%Y-%m-%d %H:%M}: {e}"
                 print(f" [SISTEMA] Erro ao renomear {_rotulo_ident(registro, ident)}: {e}")
                 continue
-            registro.setdefault("episodios", {})[ident] = "baixado"
+            for marcado in [ident] + [str(n) for n in episodios_do_ident(ident)]:
+                registro.setdefault("episodios", {})[marcado] = "baixado"
             registro.setdefault("baixado_em", {})[ident] = agora.strftime("%Y-%m-%d %H:%M")
             registro["downloads_em_andamento"].pop(ident, None)
             registro.get("falhas_download", {}).pop(ident, None)
