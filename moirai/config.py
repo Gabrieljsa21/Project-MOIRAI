@@ -51,6 +51,19 @@ def salvar_anime_pasta_assistidos(caminho):
     _definir_par("anime_pasta_assistidos", caminho)
 
 
+def obter_midia_tracker_ativo():
+    """Séries e filmes do TorrentFilmesHD (2026-10-17, `core/midia_tracker.py`)."""
+    return _carregar().get("midia_tracker_ativo", True)
+
+
+def obter_midia_pasta_series():
+    return _carregar().get("midia_pasta_series", "E:\\Downloads\\Series")
+
+
+def obter_midia_pasta_filmes():
+    return _carregar().get("midia_pasta_filmes", "E:\\Downloads\\Filmes")
+
+
 def obter_mal_sync_ativo():
     return _carregar().get("mal_sync_ativo", False)
 

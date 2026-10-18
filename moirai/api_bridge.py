@@ -33,7 +33,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from moirai import config
-from moirai.core import anime_tracker, inspiracao_anime
+from moirai.core import anime_tracker, inspiracao_anime, midia_tracker
 from moirai.integrations.myanimelist import mal_client
 
 LOCAL_API_HOST = "127.0.0.1"
@@ -84,6 +84,9 @@ class _API(BaseHTTPRequestHandler):
             ])
         elif caminho == "/anime/animes_rastreados":
             self._responder_json(dict(anime_tracker.obter_animes_rastreados()))
+        elif caminho == "/midia/rastreados":
+            # 🔥 2026-10-17 - abas Série e Filme do Assistente (GAIA).
+            self._responder_json(dict(midia_tracker.obter_titulos_rastreados()))
         elif caminho == "/anime/estados_lancamento_anilist":
             self._responder_json([list(item) for item in anime_tracker.obter_estados_lancamento_anilist()])
         elif caminho == "/anime/temporada_atual":
@@ -143,8 +146,36 @@ class _API(BaseHTTPRequestHandler):
         # Com uma thread por requisição (ver iniciar_servidor_api), as rotas
         # que gravam continuam uma de cada vez, como antes, e também não
         # colidem com os loops de main.py.
+        if self.path.startswith("/midia/"):
+            self._tratar_post_midia()  # lock próprio (midia_tracker.lock_estado_midia)
+            return
         with anime_tracker.lock_estado_animes:
             self._tratar_post()
+
+    def _tratar_post_midia(self):
+        caminho = self.path
+        corpo = _ler_corpo_json(self)
+        if caminho == "/midia/marcar_interesse":
+            midia_tracker.marcar_interesse(corpo.get("chave", ""), corpo.get("interesse", ""))
+            self._responder_ok()
+        elif caminho == "/midia/remover":
+            midia_tracker.remover_titulo(corpo.get("chave", ""))
+            self._responder_ok()
+        elif caminho == "/midia/baixar_pendentes":
+            disparados, aviso = midia_tracker.baixar_pendentes_de(corpo.get("chave", ""))
+            self._responder_json({"disparados": disparados, "aviso": aviso})
+        elif caminho == "/midia/adicionar":
+            chave, erro = midia_tracker.adicionar_por_link(corpo.get("url", ""))
+            self._responder_json({"chave": chave, "erro": erro})
+        elif caminho == "/midia/verificar":
+            resultado = midia_tracker.verificar_lancamentos()
+            self._responder_json({
+                "texto_novos": midia_tracker.formatar_texto_novos(resultado["novos"]),
+                "texto_download_iniciado": midia_tracker.formatar_texto_disparados(resultado["disparados"]),
+                "falhas": [list(f) for f in resultado["falhas"]],
+            })
+        else:
+            self._responder_404()
 
     def _tratar_post(self):
         caminho = self.path

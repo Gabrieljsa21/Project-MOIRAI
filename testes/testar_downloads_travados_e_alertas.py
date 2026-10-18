@@ -15,6 +15,7 @@ from moirai import runtime_log
 from moirai.core import anime_tracker as at
 
 at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+at._checagem_midia = lambda relatorio: {"texto_novos": None, "texto_download_iniciado": None, "disparados": 0}  # sem rede: séries/filmes fora
 
 HASH_A, HASH_B = "a" * 40, "b" * 40
 URL = "https://darkmahou.io/anime/teste/"

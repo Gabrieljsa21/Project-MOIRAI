@@ -9,6 +9,7 @@ Gerenciador que acompanha episódios de anime, cuida dos downloads e mantém o p
 ## Recursos principais
 
 - encontra lançamentos no DarkMahou;
+- acompanha séries e filmes do TorrentFilmesHD, com o mesmo fluxo dos animes;
 - mantém animes acompanhados, de interesse e ignorados;
 - confirma datas pelo AniList;
 - identifica episódios novos e pendentes;
@@ -35,7 +36,7 @@ Ao lado da agulha, dois elementos formam uma figura parecida com o símbolo de r
 
 - Python 3.11 ou mais recente;
 - qBittorrent com a Web UI ativa;
-- acesso ao DarkMahou e ao AniList;
+- acesso ao DarkMahou, ao TorrentFilmesHD e ao AniList;
 - conta do MyAnimeList para a sincronização opcional;
 - `ffmpeg` opcional para trocar o contêiner de `.mp4` para `.mkv`.
 
