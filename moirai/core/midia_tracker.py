@@ -363,6 +363,15 @@ def _status(registro, ident):
     return registro.get("episodios", {}).get(str(ident))
 
 
+# "assistido" (apagado da pasta ou visto pelo ▶️, 2026-10-18) também já foi
+# baixado: nunca baixa de novo.
+_STATUS_JA_TEM = ("baixado", "assistido")
+
+
+def _ja_tem(registro, ident):
+    return _status(registro, ident) in _STATUS_JA_TEM
+
+
 def episodios_do_ident(ident):
     """"3" -> [3]; "1-2" (um torrent com dois episódios) -> [1, 2];
     filme e pacote -> []."""
@@ -381,7 +390,7 @@ def _idents_a_baixar(registro, opcoes):
     boas = [o for o in opcoes if not o["cam"]]
     em_andamento = registro.get("downloads_em_andamento", {})
     if registro.get("tipo") != "serie":
-        if boas and _status(registro, IDENT_FILME) != "baixado" and IDENT_FILME not in em_andamento:
+        if boas and not _ja_tem(registro, IDENT_FILME) and IDENT_FILME not in em_andamento:
             return {IDENT_FILME: boas}
         return {}
     por_ident = {}
@@ -390,14 +399,14 @@ def _idents_a_baixar(registro, opcoes):
             por_ident.setdefault(_ident_de_episodios(opcao["episodios"]), []).append(opcao)
     if not por_ident:
         pacotes = [o for o in boas if not o["episodios"]]
-        if pacotes and _status(registro, IDENT_PACOTE) != "baixado" and IDENT_PACOTE not in em_andamento:
+        if pacotes and not _ja_tem(registro, IDENT_PACOTE) and IDENT_PACOTE not in em_andamento:
             return {IDENT_PACOTE: pacotes}
         return {}
-    if IDENT_PACOTE in em_andamento or _status(registro, IDENT_PACOTE) == "baixado":
+    if IDENT_PACOTE in em_andamento or _ja_tem(registro, IDENT_PACOTE):
         return {}
     # Já baixado ou baixando, inclusive dentro de um torrent de vários episódios.
     cobertos = {int(n) for n, s in registro.get("episodios", {}).items()
-                if n.isdigit() and s in ("baixado", "conflito_qbittorrent")}
+                if n.isdigit() and s in _STATUS_JA_TEM + ("conflito_qbittorrent",)}
     for ident in em_andamento:
         cobertos.update(episodios_do_ident(ident))
     com_opcao_propria = {episodios_do_ident(i)[0] for i in por_ident if len(episodios_do_ident(i)) == 1}
@@ -575,7 +584,7 @@ def verificar_lancamentos():
                 registro["titulo"] = item["titulo"]
                 registro["capa_url"] = item["capa_url"] or registro.get("capa_url")
         acompanhados = [(c, r) for c, r in titulos.items() if r.get("interesse") == "tenho_interesse"
-                        and not (r.get("tipo") == "filme" and _status(r, IDENT_FILME) == "baixado")]
+                        and not (r.get("tipo") == "filme" and _ja_tem(r, IDENT_FILME))]
         cliente = None
         if acompanhados and at.qbittorrent_configurado():
             try:
@@ -641,6 +650,7 @@ def _concluir(cliente, registro, ident, info, torrent):
                 at._remover_subpastas_vazias_do_lote(torrent.save_path, caminho)
             for n in episodios:
                 registro.setdefault("episodios", {})[str(n)] = "baixado"
+                registro.setdefault("arquivos", {})[str(n)] = destino
             renomeados += 1
         if not renomeados:
             registro.setdefault("erro_renomear", {})[ident] = f"{agora}: nenhum vídeo com SxxEyy no nome"
@@ -656,6 +666,8 @@ def _concluir(cliente, registro, ident, info, torrent):
             return False
         at._renomear_episodio_avulso(cliente, torrent, arquivo_video, destino)
         at._remover_subpastas_vazias_do_lote(torrent.save_path, arquivo_video)
+    for marcado in episodios_do_ident(ident) or [ident]:
+        registro.setdefault("arquivos", {})[str(marcado)] = destino
     return True
 
 
@@ -773,3 +785,168 @@ def _tratar_travado(cliente, chave, registro, ident, info):
         print(f" [SISTEMA] Erro ao remover torrent travado {info['hash']}: {e}")
     escolhida, motivo = _disparar(cliente, registro, ident, escolha)
     print(f" [SISTEMA] ⚠️ {rotulo}: download travado - " + (f"trocado por {escolhida}." if escolhida else f"sem troca ({motivo})."))
+
+
+# ======================================================
+# 👁 ASSISTIDOS + TRAKT (2026-10-18)
+# ======================================================
+# Pedido do usuário: "como serie é pesada, eu so removo, n movo para
+# assistido" e "mesma regra p filme". Episódio ou filme baixado pelo MOIRAI
+# que sumiu da pasta conta como assistido; o ▶️ do card abre, confirma que
+# assistiu e apaga sozinho. Cada um vai pro histórico do Trakt.
+
+def _caminho_do(registro, chave_ep):
+    """Arquivo final de um episódio ("3") ou do filme ("filme"). Registro
+    anterior a 2026-10-18 não guardava o caminho: procura pelo nome final."""
+    caminho = registro.get("arquivos", {}).get(chave_ep)
+    if caminho:
+        return caminho
+    pasta = pasta_destino(registro)
+    if registro.get("tipo") == "serie":
+        prefixo = nome_final(registro, chave_ep, "")
+    else:
+        prefixo = nome_final(registro, IDENT_FILME, "")
+    try:
+        for nome in sorted(os.listdir(pasta)):
+            if nome.startswith(prefixo) and nome.lower().endswith(at.EXTENSOES_VIDEO):
+                caminho = os.path.join(pasta, nome)
+                registro.setdefault("arquivos", {})[chave_ep] = caminho
+                return caminho
+    except OSError:
+        pass
+    return None
+
+
+def _marcar_assistido(registro, chave_ep, quando=None):
+    registro.setdefault("episodios", {})[chave_ep] = "assistido"
+    registro.setdefault("assistido_em", {})[chave_ep] = quando or datetime.now().strftime("%Y-%m-%d %H:%M")
+    pendentes = registro.setdefault("trakt_pendentes", [])
+    if chave_ep not in pendentes:
+        pendentes.append(chave_ep)
+
+
+def _chaves_baixadas(registro):
+    """Episódios (números) ou "filme" com status "baixado"."""
+    return [c for c, st in registro.get("episodios", {}).items()
+            if st == "baixado" and (c.isdigit() or c == IDENT_FILME)]
+
+
+def sincronizar_assistidos():
+    """Loop de downloads (~30s): o que estava baixado e sumiu da pasta vira
+    "assistido", e o que estiver pendente vai pro Trakt. Só olha o disco; o
+    Trakt só é chamado quando há o que marcar. Devolve quantos viraram
+    assistidos nesta volta."""
+    with lock_estado_midia:
+        titulos = _carregar()
+        mudou, novos = False, 0
+        for registro in titulos.values():
+            em_andamento = registro.get("downloads_em_andamento", {})
+            cobertos = {str(n) for ident in em_andamento for n in episodios_do_ident(ident)} | set(em_andamento)
+            for chave_ep in _chaves_baixadas(registro):
+                if chave_ep in cobertos:
+                    continue
+                antes = dict(registro.get("arquivos", {}))
+                caminho = _caminho_do(registro, chave_ep)
+                mudou = mudou or registro.get("arquivos", {}) != antes
+                if caminho and os.path.exists(caminho):
+                    continue
+                _marcar_assistido(registro, chave_ep)
+                mudou, novos = True, novos + 1
+                print(f" [SISTEMA] 👁 {_rotulo_assistido(registro, chave_ep)}: arquivo apagado, marcado como assistido.")
+        if any(r.get("trakt_pendentes") for r in titulos.values()):
+            mudou = _enviar_ao_trakt(titulos) or mudou
+        if mudou:
+            _salvar(titulos)
+        return novos
+
+
+def _rotulo_assistido(registro, chave_ep):
+    return registro["titulo"] if chave_ep == IDENT_FILME else _rotulo_ident(registro, chave_ep)
+
+
+def _enviar_ao_trakt(titulos):
+    """Manda os pendentes de todos os títulos numa chamada só. Título que o
+    Trakt não acha fica pendente com `trakt_erro` (aparece no card). True se
+    algo mudou no estado."""
+    from moirai.integrations.trakt import trakt_client
+    if not trakt_client.esta_conectado():
+        return False
+    episodios, filmes, enviados, mudou = [], [], [], False
+    for registro in titulos.values():
+        pendentes = registro.get("trakt_pendentes") or []
+        if not pendentes:
+            continue
+        if not registro.get("trakt_id"):
+            tipo = "show" if registro.get("tipo") == "serie" else "movie"
+            titulo = titulo_base_serie(registro["titulo"]) if tipo == "show" else re.sub(r"\s*\(\d{4}\)\s*$", "", registro["titulo"])
+            ano = re.search(r"\((\d{4})\)", registro["titulo"])
+            achado = trakt_client.buscar(tipo, titulo, ano.group(1) if ano else None)
+            mudou = True
+            if not achado:
+                registro["trakt_erro"] = f"não achei \"{titulo}\" no Trakt"
+                continue
+            registro.update({"trakt_id": achado["trakt"], "trakt_titulo": f"{achado['titulo']} ({achado['ano']})"})
+            registro.pop("trakt_erro", None)
+        for chave_ep in pendentes:
+            quando = registro.get("assistido_em", {}).get(chave_ep)
+            if chave_ep == IDENT_FILME:
+                filmes.append((registro["trakt_id"], quando))
+            else:
+                episodios.append((registro["trakt_id"], temporada_do_registro(registro), int(chave_ep), quando))
+        enviados.append(registro)
+    if not enviados:
+        return mudou
+    ok, erro = trakt_client.marcar_assistidos(episodios, filmes)
+    for registro in enviados:
+        if ok:
+            registro.setdefault("trakt_enviado", []).extend(registro["trakt_pendentes"])
+            registro["trakt_pendentes"] = []
+            registro.pop("trakt_erro", None)
+        else:
+            registro["trakt_erro"] = erro
+    print(" [SISTEMA] 👁 Trakt: " + (f"{len(episodios)} episódio(s) e {len(filmes)} filme(s) marcados." if ok else f"não marcou ({erro})."))
+    return True
+
+
+def _proximo_para_assistir(registro):
+    """(chave do episódio/filme, caminho) do menor episódio baixado que ainda
+    está no disco, ou (None, None)."""
+    chaves = sorted(_chaves_baixadas(registro), key=lambda c: int(c) if c.isdigit() else 0)
+    for chave_ep in chaves:
+        caminho = _caminho_do(registro, chave_ep)
+        if caminho and os.path.exists(caminho):
+            return chave_ep, caminho
+    return None, None
+
+
+def assistir(chave):
+    """▶️ do card: abre o próximo episódio (ou o filme) no player e, quando
+    confirma que assistiu (mesma regra do ▶️ dos animes), apaga o arquivo e
+    marca como assistido. Devolve (sucesso, rótulo, erro)."""
+    with lock_estado_midia:
+        titulos = _carregar()
+        registro = titulos.get(chave)
+        if not registro:
+            return False, None, "título não encontrado"
+        chave_ep, caminho = _proximo_para_assistir(registro)
+        _salvar(titulos)  # _caminho_do pode ter descoberto caminhos
+    if not caminho:
+        return False, None, "nenhum episódio baixado na pasta"
+    rotulo = _rotulo_assistido(registro, chave_ep)
+    at.abrir_e_monitorar(caminho, lambda: _concluir_assistido(chave, chave_ep, caminho))
+    return True, rotulo, None
+
+
+def _concluir_assistido(chave, chave_ep, caminho):
+    try:
+        os.remove(caminho)
+    except OSError as e:
+        print(f" [SISTEMA] Não consegui apagar {caminho} depois de assistido: {e}")
+    with lock_estado_midia:
+        titulos = _carregar()
+        registro = titulos.get(chave)
+        if registro and _status(registro, chave_ep) != "assistido":
+            _marcar_assistido(registro, chave_ep)
+            print(f" [SISTEMA] 👁 {_rotulo_assistido(registro, chave_ep)}: assistido pelo ▶️.")
+            _enviar_ao_trakt(titulos)
+            _salvar(titulos)

@@ -233,7 +233,68 @@ def testar_hash_base32_e_torrent_com_dois_episodios():
     assert list(serie["downloads_em_andamento"]) == ["3"]
 
 
+def testar_apagado_vira_assistido_e_vai_pro_trakt():
+    """2026-10-18, pedido do usuário: "como serie é pesada, eu so removo" e
+    "mesma regra p filme". Arquivo apagado = assistido, nunca baixa de novo,
+    e o Trakt recebe o histórico (API simulada)."""
+    from moirai.integrations.trakt import trakt_client as tc
+    pasta, cliente = _preparar()
+    mt.verificar_lancamentos()
+    chave = "slow-horses-6a-temporada-2026"
+    mt.marcar_interesse(chave, "tenho_interesse")
+    titulos = mt._carregar()
+    serie = titulos[chave]
+    pasta_serie = os.path.join(pasta, "Series", "Slow Horses")
+    os.makedirs(pasta_serie, exist_ok=True)
+    # Episódios baixados antes de existir `arquivos`: achados pelo nome.
+    for ep in ("1", "2"):
+        serie["episodios"][ep] = "baixado"
+        open(os.path.join(pasta_serie, f"Slow Horses - S06E0{ep}.mkv"), "wb").close()
+    mt._salvar(titulos)
+
+    enviados, buscas = [], []
+    tc.esta_conectado = lambda: True
+    tc.buscar = lambda tipo, titulo, ano=None: buscas.append((tipo, titulo, ano)) or {"trakt": 155534, "titulo": "Slow Horses", "ano": 2022}
+    tc.marcar_assistidos = lambda episodios=(), filmes=(): enviados.append((list(episodios), list(filmes))) or (True, None)
+
+    assert mt.sincronizar_assistidos() == 0 and not enviados  # tudo ainda no disco
+    os.remove(os.path.join(pasta_serie, "Slow Horses - S06E01.mkv"))
+    assert mt.sincronizar_assistidos() == 1
+    serie = mt._carregar()[chave]
+    assert serie["episodios"]["1"] == "assistido" and serie["episodios"]["2"] == "baixado"
+    assert buscas == [("show", "Slow Horses", "2026")]
+    assert enviados[0][0][0][:3] == (155534, 6, 1) and serie["trakt_pendentes"] == []
+    assert serie["trakt_titulo"] == "Slow Horses (2022)"
+    # Assistido não volta pra fila de download.
+    assert "1" not in mt._idents_a_baixar(serie, mt.interpretar_pagina(PAGINAS[URL_SERIE], URL_SERIE)["opcoes"])
+
+    # Trakt fora: fica pendente com o motivo, e vai na próxima volta.
+    tc.marcar_assistidos = lambda episodios=(), filmes=(): (False, "o Trakt não respondeu")
+    os.remove(os.path.join(pasta_serie, "Slow Horses - S06E02.mkv"))
+    mt.sincronizar_assistidos()
+    serie = mt._carregar()[chave]
+    assert serie["trakt_pendentes"] == ["2"] and serie["trakt_erro"] == "o Trakt não respondeu"
+    tc.marcar_assistidos = lambda episodios=(), filmes=(): enviados.append((list(episodios), list(filmes))) or (True, None)
+    mt.sincronizar_assistidos()
+    assert mt._carregar()[chave]["trakt_pendentes"] == [] and len(buscas) == 1  # id do Trakt reaproveitado
+
+    # ▶️: abre o próximo baixado e, ao confirmar, apaga e marca.
+    titulos = mt._carregar()
+    titulos[chave]["episodios"]["3"] = "baixado"
+    mt._salvar(titulos)
+    arquivo = os.path.join(pasta_serie, "Slow Horses - S06E03.mkv")
+    open(arquivo, "wb").close()
+    abertos = []
+    at.abrir_e_monitorar = lambda caminho, ao_assistir: abertos.append((caminho, ao_assistir)) or True
+    sucesso, rotulo, erro = mt.assistir(chave)
+    assert sucesso and rotulo == "Slow Horses S06E03" and abertos[0][0] == arquivo
+    abertos[0][1]()  # player confirmou que assistiu
+    assert not os.path.exists(arquivo) and mt._carregar()[chave]["episodios"]["3"] == "assistido"
+    assert enviados[-1][0][0][:3] == (155534, 6, 3)
+
+
 if __name__ == "__main__":
+    testar_apagado_vira_assistido_e_vai_pro_trakt()
     testar_hash_base32_e_torrent_com_dois_episodios()
     testar_rotulos_e_prioridade()
     testar_fluxo_pendente_like_download_renomeacao()

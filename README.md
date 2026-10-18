@@ -16,7 +16,8 @@ Gerenciador que acompanha episódios de anime, cuida dos downloads e mantém o p
 - envia downloads ao qBittorrent;
 - organiza temporadas e renomeia os arquivos da biblioteca;
 - registra o último episódio baixado e assistido;
-- sincroniza o progresso com o MyAnimeList.
+- sincroniza o progresso com o MyAnimeList;
+- marca séries e filmes assistidos no Trakt.
 
 ## Origem do nome
 
