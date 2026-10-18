@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-18
+
+### Corrigido
+
+- **Anime não baixava: "Nenhum dos 5 downloads tentados deu certo" (2026-10-18, alerta da GAIA)**: o DarkMahou passou a pôr cada opção de download atrás do encurtador `otakufilmes.org/encurtar/redirect.php?id=...`, e todo episódio novo caía em "nenhum magnet na página do anime" (casos reais: Magical Explorer E04, Tempal E04, Tensei Kizoku 3 E04, Revo Barai E03, Seitokai ni mo Ana wa Aru! E03). `_resolver_link_encurtado` percorre as duas etapas do encurtador (15s de contagem cada) e pega o magnet em `POST ?action=resolve`. Leva cerca de 35s por episódio na primeira vez (as opções do episódio são resolvidas em paralelo); o magnet fica em `data/anime_tracker_links_encurtados.json` e não é buscado de novo. Só as opções do episódio pedido são resolvidas, nunca a página inteira. Coberto por `testes/testar_link_encurtador.py`.
+
 ## [0.4.0] - 2026-10-18
 
 ### Adicionado

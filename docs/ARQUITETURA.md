@@ -864,6 +864,31 @@ para assistido" e "mesma regra p filme".
 
 Ver `testes/testar_midia_tracker.py`.
 
+## Magnet atrás do encurtador (2026-10-18)
+
+O DarkMahou trocou o `href` de cada opção (`div.dm-hosts > a`) de
+`magnet:...` por `https://otakufilmes.org/encurtar/redirect.php?id=...`
+(com `data-dm-encurtado="true"`). O layout da página continuou o de
+2026-10-09; o sintoma foi o mesmo: "nenhum magnet na página do anime".
+
+- O encurtador tem duas etapas. A primeira página cria a sessão (cookie
+  `OTAKUSHORTV2`); 15s depois, `&step=download&site=` devolve a segunda, com o
+  token `flow` no JavaScript. Mais 15s e `POST &action=resolve` (corpo
+  `flow=...`) responde `{"success": true, "url": "magnet:..."}`. Antes da
+  contagem, `{"error": "countdown_pending", "retry_after": N}`. A verificação
+  de bloqueador de anúncios é só no navegador.
+- `_PADRAO_LINK_DOWNLOAD` aceita o link do encurtador, então os leitores de
+  bloco continuam iguais. `_extrair_opcoes_download` (agora um invólucro de
+  `_opcoes_download_na_pagina`) e `_opcoes_pacote_completo` passam as opções por
+  `_resolver_opcoes_encurtadas`: resolve só as do episódio pedido, até 4 em
+  paralelo, e descarta a que falha. O resto do fluxo recebe magnet de verdade.
+- Cache em `data/anime_tracker_links_encurtados.json` (link -> magnet; o `id`
+  não muda). Falha fica em memória por 1h, como o `.torrent` removido.
+  `_extrair_hashes_por_episodio` lê só o cache: resolver a página inteira
+  levaria cerca de 32s por link.
+
+Ver `testes/testar_link_encurtador.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
