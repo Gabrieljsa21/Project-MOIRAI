@@ -805,6 +805,18 @@ animes (pendente, 👍 baixa, 👎 ignora), sem baixar a home inteira.
   `main.py`, fora do lock dos animes. As rotas `POST /midia/*` também ficam
   fora do `lock_estado_animes`.
 
+- **Hash em base32 e torrent de vários episódios** (mesmo dia, relato do
+  usuário com VisionQuest). Parte dos magnets do site traz o hash em base32;
+  `hash_do_magnet` converte para hexadecimal, o formato de `torrents_info`.
+  Rótulos como "Ep. 01 e 02", "Ep.01 a 03" e "Ep.01/03" viram a lista
+  `episodios` da opção, e o download fica sob a chave "1-2". Um botão de
+  vários episódios só é usado se algum episódio que falta não tiver botão
+  próprio (senão baixa um por um). Na conclusão, cada vídeo é renomeado pelo
+  SxxEyy do próprio nome, como o pacote da temporada. Parte dos botões é
+  um magnet direto publicado sem ":" e "/" (`urnbtih<hash>`,
+  `udptracker.opentrackr.org1337announce`): `_reparar_magnet` refaz o
+  magnet a partir do hash, com trackers públicos.
+
 Ver `testes/testar_midia_tracker.py`.
 
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
