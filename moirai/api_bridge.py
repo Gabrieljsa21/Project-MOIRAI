@@ -35,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from moirai import config
 from moirai.core import anime_tracker, inspiracao_anime, midia_tracker
 from moirai.integrations.myanimelist import mal_client
+from moirai.integrations.trakt import trakt_client
 
 LOCAL_API_HOST = "127.0.0.1"
 LOCAL_API_PORT = 8768
@@ -87,6 +88,9 @@ class _API(BaseHTTPRequestHandler):
         elif caminho == "/midia/rastreados":
             # 🔥 2026-10-17 - abas Série e Filme do Assistente (GAIA).
             self._responder_json(dict(midia_tracker.obter_titulos_rastreados()))
+        elif caminho == "/midia/trakt/estado":
+            # 🔥 2026-10-18 - bloco "Trakt" da aba Configurações de Série/Filme.
+            self._responder_json(trakt_client.obter_estado())
         elif caminho == "/anime/estados_lancamento_anilist":
             self._responder_json([list(item) for item in anime_tracker.obter_estados_lancamento_anilist()])
         elif caminho == "/anime/temporada_atual":
@@ -174,6 +178,14 @@ class _API(BaseHTTPRequestHandler):
                 "texto_download_iniciado": midia_tracker.formatar_texto_disparados(resultado["disparados"]),
                 "falhas": [list(f) for f in resultado["falhas"]],
             })
+        elif caminho == "/midia/assistir":
+            sucesso, rotulo, erro = midia_tracker.assistir(corpo.get("chave", ""))
+            self._responder_json({"sucesso": sucesso, "rotulo": rotulo, "erro": erro})
+        elif caminho == "/midia/trakt/conectar":
+            self._responder_json(trakt_client.iniciar_conexao())
+        elif caminho == "/midia/trakt/desconectar":
+            trakt_client.desconectar()
+            self._responder_ok()
         else:
             self._responder_404()
 
