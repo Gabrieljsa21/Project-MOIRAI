@@ -4015,6 +4015,7 @@ def _executar_checagem_completa(origem):
         pendentes = verificar_novos_lancamentos(relatorio)
         texto_pendentes = formatar_texto_pendentes(pendentes) if obter_anime_notificar_pendentes_ativo() else None
         disparados, itens_baixados, falhas_download = processar_downloads_pendentes()
+        midia = _checagem_midia(relatorio)
     except Exception as e:
         erro = str(e)
         raise
@@ -4028,7 +4029,9 @@ def _executar_checagem_completa(origem):
             "downloads_com_falha": _detalhar_falhas(falhas_download),
             "erro": erro,
         })
-    texto_download_iniciado = formatar_texto_download_iniciado(itens_baixados)
+    texto_download_iniciado = _juntar_textos(formatar_texto_download_iniciado(itens_baixados), midia["texto_download_iniciado"])
+    texto_pendentes = _juntar_textos(texto_pendentes, midia["texto_novos"])
+    disparados += midia["disparados"]
     texto_alertas = formatar_texto_alertas(
         _alertas_de_site(relatorio, itens_baixados, falhas_download) + _coletar_alertas_falha_persistente()
     )
@@ -4054,6 +4057,42 @@ def _executar_checagem_completa(origem):
     else:
         _incluir_resultados_nao_entregues(resultado)
     return resultado
+
+
+def _checagem_midia(relatorio):
+    """Séries e filmes do TorrentFilmesHD (2026-10-17, core/midia_tracker.py)
+    na mesma checagem dos animes: a GAIA e a checagem autônoma já chamam esta,
+    e o resultado sai nos mesmos textos. Só os títulos que apareceram pela 1ª
+    vez entram no aviso: a home tem ~50 títulos e repetir todos os pendentes
+    todo dia viraria um muro de texto. Erro aqui nunca derruba a checagem
+    dos animes."""
+    from moirai.config import obter_midia_tracker_ativo
+    from moirai.core import midia_tracker
+    vazio = {"texto_novos": None, "texto_download_iniciado": None, "disparados": 0}
+    if not obter_midia_tracker_ativo():
+        return vazio
+    try:
+        resultado = midia_tracker.verificar_lancamentos()
+    except Exception as e:
+        print(f" [SISTEMA] Erro na checagem de séries/filmes: {e}")
+        relatorio["midia_erro"] = str(e)
+        return vazio
+    relatorio.update({
+        "midia_itens_home": resultado["itens_home"],
+        "midia_novos": [titulo for titulo, _ in resultado["novos"]],
+        "midia_downloads_disparados": resultado["disparados"],
+        "midia_downloads_com_falha": [{"titulo": t, "motivo": m} for t, m in resultado["falhas"]],
+    })
+    return {
+        "texto_novos": midia_tracker.formatar_texto_novos(resultado["novos"]) if obter_anime_notificar_pendentes_ativo() else None,
+        "texto_download_iniciado": midia_tracker.formatar_texto_disparados(resultado["disparados"]),
+        "disparados": len(resultado["disparados"]),
+    }
+
+
+def _juntar_textos(*textos):
+    partes = [t for t in textos if t]
+    return "\n\n".join(partes) if partes else None
 
 
 def _detalhar_falhas(falhas_download):

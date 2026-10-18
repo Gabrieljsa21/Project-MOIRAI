@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from moirai.core import anime_tracker as at
 
 at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
+at._checagem_midia = lambda relatorio: {"texto_novos": None, "texto_download_iniciado": None, "disparados": 0}  # sem rede: séries/filmes fora
 
 HOME = """<div class="bixbox latestdark"></div><div class="listupd">
 <article class="bs"><div class="bsx"><a href="https://darkmahou.io/anime/na-home/">

@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-17
+
+### Adicionado
+
+- **Séries e filmes do TorrentFilmesHD (2026-10-17, pedido do usuário: "quero adicionar uma segunda fonte no moirai")**: módulo novo `moirai/core/midia_tracker.py`, com o mesmo processo dos animes. O DarkMahou continua sendo a fonte dos animes; o TorrentFilmesHD vira a de séries e filmes. Título novo da home entra como "pendente"; 👍 baixa sozinho (série: todos os episódios da temporada e os que saírem depois; filme: uma vez); 👎 ignora. Versão escolhida: dual/multi áudio primeiro, depois dublado, depois o resto, sempre na melhor resolução. Gravação de cinema (CAM/TS/telesync) nunca é baixada; o filme espera uma versão de verdade. Séries vão para `E:\Downloads\Series\<Série>\Temporada N\<Série> - SxxEyy.ext`, filmes para `E:\Downloads\Filmes\<Título (Ano)>.ext` (configs `midia_pasta_series`/`midia_pasta_filmes`). Download travado troca pela próxima opção da página, sem tirar o torrent quando não há outra. Estado em `data/midia_tracker_titulos.json` (gravação atômica) com lock próprio. Roda junto da checagem dos animes (GAIA ou autônoma); os títulos novos e os downloads iniciados saem nos mesmos textos de aviso, e a home inteira da 1ª checagem vira uma linha de resumo. Rotas novas: `GET /midia/rastreados`, `POST /midia/marcar_interesse`, `/midia/remover`, `/midia/baixar_pendentes`, `/midia/adicionar`, `/midia/verificar`. Coberto por `testes/testar_midia_tracker.py`; os dois testes que rodam a checagem completa passaram a desligar essa parte para não acessar a rede.
+
 ## [0.2.1] - 2026-10-16
 
 ### Corrigido
