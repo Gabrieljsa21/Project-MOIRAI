@@ -749,6 +749,64 @@ escondido nela. O mesmo aconteceu com Kanojo no Tomodachi E02.
 
 Ver `testes/testar_renomear_arquivo_em_uso.py`.
 
+## Séries e filmes: segunda fonte (2026-10-17)
+
+Pedido do usuário: "quero adicionar uma segunda fonte no moirai", com o
+TorrentFilmesHD (`https://www.torrentfilmeshds.org/`). Decisões dele: o
+DarkMahou continua sendo a fonte dos animes, o site novo é a de séries e
+filmes, a tela ganha as abas Anime/Série/Filme e o processo é o mesmo dos
+animes (pendente, 👍 baixa, 👎 ignora), sem baixar a home inteira.
+
+- **Módulo próprio** (`core/midia_tracker.py`), estado em
+  `data/midia_tracker_titulos.json` e `lock_estado_midia` próprio. O site não
+  tem nada em comum com o DarkMahou além do qBittorrent, então reaproveita só
+  os helpers do `anime_tracker` (cliente do qBittorrent, hash do magnet,
+  maior vídeo, rename com volta pela API, remoção de subpasta vazia). Lock
+  separado porque a checagem de séries e filmes faz rede por página e não
+  pode segurar a fila dos animes. A gravação usa arquivo temporário e
+  `os.replace`, para a leitura da ponte nunca pegar JSON pela metade.
+- **Home**: `section.filmes-section article.item` (título em
+  `div.titulo span`, capa no `img`). Tipo pelo slug: `-Na-temporada-` é
+  série, o resto é filme. Cada temporada tem página e chave próprias, como as
+  temporadas de anime no DarkMahou.
+- **Página**: título em `h1.titulo` (sem o sufixo "Torrent ... Download"),
+  pôster em `img.attachment-large`, trailer no iframe de `div.movie-trailer`
+  (só se for YouTube: página antiga traz `http://Tulsa%20King`). Cada botão
+  `a.download-btn` aponta para `/link.php?id=...`, que devolve uma página com
+  o magnet no HTML, sem redirecionamento nem desafio do Cloudflare. O link só
+  é aberto para a opção que chega a ser avaliada.
+- **Rótulos**: "S06.1080p | MKV | Ep.01 | Dual Áudio", "S02.1080p | Episódio
+  10 Final | Multi Áudio", "S01.1080p | 6.41 GB | Dual Áudio" (pacote),
+  "CAMRip | 5.11 GB | Inglês". `interpretar_rotulo` tira episódio,
+  temporada, resolução, nível de áudio, CAM e tamanho.
+- **Escolha** (pedido do usuário: "Prioridade dual, depois dublado, sempre na
+  melhor qualidade disponivel"): `chave_qualidade` = (áudio, resolução,
+  tamanho). Dual 720p ganha de dublado 1080p, de propósito. CAM, TS,
+  telesync (e a grafia "Tenesync" do site) nunca entram: em outubro de 2026
+  metade dos filmes da home só tinha essa versão, e a página ganha a versão
+  boa depois. O registro guarda `so_cam` para a tela explicar a espera.
+- **Série**: com botão por episódio, baixa cada episódio que falta (a
+  temporada toda ao dar 👍, como o backfill dos animes). Sem nenhum, baixa o
+  pacote da temporada (`pacote`) e, ao concluir, renomeia cada vídeo com
+  SxxEyy no nome. Destino `<pasta de séries>\<Série>\Temporada N`, arquivo
+  `<Série> - SxxEyy.ext`. **Filme**: `filme`, destino a raiz da pasta de
+  filmes, arquivo com o título do site (`Verity (2026).mkv`).
+- **Travado**: mesmos prazos dos animes (`anime_download_travado_horas`, 2h
+  sem seeder). `_proxima_opcao` procura uma opção não tentada antes de tirar
+  o torrent; sem nenhuma, o torrent fica (`sem_alternativa`).
+- **Checagem**: `_checagem_midia` roda dentro de `_executar_checagem_completa`,
+  então a GAIA e a checagem autônoma já cobrem séries e filmes. Erro nela
+  nunca derruba a dos animes. Os títulos novos entram em `texto_pendentes` só
+  na checagem em que aparecem (repetir ~50 pendentes por dia seria um muro de
+  texto); mais de 15 viram uma linha de resumo. Downloads iniciados vão para
+  `texto_download_iniciado`. O histórico ganha `midia_novos`,
+  `midia_downloads_disparados` e `midia_downloads_com_falha`.
+- **Downloads em andamento**: `verificar_downloads` no `_loop_downloads` do
+  `main.py`, fora do lock dos animes. As rotas `POST /midia/*` também ficam
+  fora do `lock_estado_animes`.
+
+Ver `testes/testar_midia_tracker.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/

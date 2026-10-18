@@ -60,7 +60,7 @@ load_dotenv(str(PASTA_PROJETO / ".env"), override=True)
 from moirai import config
 from moirai import runtime_log
 from moirai.api_bridge import iniciar_servidor_api
-from moirai.core import anime_tracker
+from moirai.core import anime_tracker, midia_tracker
 
 PORTA_INSTANCIA_UNICA = 8769
 INTERVALO_LOOP_SEGUNDOS = 5 * 60
@@ -151,6 +151,11 @@ def _loop_downloads():
                     anime_tracker.organizar_animes_finalizados()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de downloads: {e}")
+        try:
+            if config.obter_midia_tracker_ativo():
+                midia_tracker.verificar_downloads()  # 🔥 2026-10-17 - lock próprio, ver midia_tracker
+        except Exception as e:
+            print(f" [SISTEMA] MOIRAI: erro no loop de downloads de séries/filmes: {e}")
         time.sleep(max(5, config.obter_anime_intervalo_downloads_segundos()))
 
 
