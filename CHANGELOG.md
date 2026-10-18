@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-17
+
+### Corrigido
+
+- **Série não baixava: "todas as opções da página já travaram ou não abriram" (2026-10-17, relato do usuário com VisionQuest S01E01)**: três causas. O magnet de parte das páginas do TorrentFilmesHD traz o hash em base32 (32 caracteres) e o MOIRAI só reconhecia o hexadecimal de 40, então descartava todas as opções. `hash_do_magnet` (em `midia_tracker`) converte o base32 para o hexadecimal que o qBittorrent devolve. E o botão "Ep. 01 e 02" (um torrent com dois episódios) contava só como o episódio 1: o rótulo agora vira a lista de episódios ("Ep. 01 e 02", "Ep.01 a 03", "Ep.01/03", "S01E01-02"), o download fica sob a chave "1-2", um botão de vários episódios só é usado quando algum deles não tem botão próprio, e na conclusão cada vídeo é renomeado pelo SxxEyy do nome (um arquivo com os dois juntos vira "S01E01-E02") e todos os episódios do torrent ficam "baixado". Por fim, parte dos botões é um magnet direto que o site publica sem ":" e "/" (`magnet:?xt=urnbtih3ed5...`, caso real A Casa do Dragão S03E02 a E04 e E08): `_reparar_magnet` refaz o magnet a partir do hash, que continua inteiro, com trackers públicos. Conferido no site: as 63 opções utilizáveis da home viram magnet. Coberto por `testes/testar_midia_tracker.py`.
+
 ## [0.3.0] - 2026-10-17
 
 ### Adicionado

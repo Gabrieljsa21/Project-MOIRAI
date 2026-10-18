@@ -171,7 +171,51 @@ def testar_travado_troca_pela_proxima_opcao():
     assert serie["downloads_em_andamento"]["1"]["sem_alternativa"] and _hash(2) in cliente.torrents
 
 
+def testar_hash_base32_e_torrent_com_dois_episodios():
+    """Caso real VisionQuest (2026-10-17): magnet com hash em base32 e um
+    botão "Ep. 01 e 02" davam "todas as opções da página já travaram"."""
+    base32 = "magnet:?xt=urn:btih:a5dpkmtc4pv56cogiptfz76sct5s2tcz&dn=VisionQuest.S01E01-02.1080p"
+    assert mt.hash_do_magnet(base32) == "0746f53262e3ebdf09c643e65cffd214fb2d4c59"
+    assert mt.hash_do_magnet(f"magnet:?xt=urn:btih:{'A' * 40}") == "a" * 40
+    # Magnet direto quebrado pelo site (caso real A Casa do Dragão S03E02).
+    quebrado = "magnet:?xt=urnbtih3ed507635a30562c5a75272b4dede0fb66890e15&tr=udptracker.opentrackr.org1337announce"
+    assert mt.hash_do_magnet(quebrado) == "3ed507635a30562c5a75272b4dede0fb66890e15"
+    reparado = mt._reparar_magnet(quebrado)
+    assert reparado.startswith("magnet:?xt=urn:btih:3ed507635a30562c5a75272b4dede0fb66890e15&tr=udp://")
+    assert mt._reparar_magnet(base32) == base32
+    assert mt.interpretar_rotulo("S01.1080p | MKV | Ep. 01 e 02 | Dual Áudio")["episodios"] == [1, 2]
+    assert mt.interpretar_rotulo("S01.1080p | Episódios 01 a 03 | Dual Áudio")["episodios"] == [1, 2, 3]
+    assert mt.interpretar_rotulo("S06.1080p | MKV | Ep.05 - 720p")["episodios"] == [5]
+    assert mt.interpretar_rotulo("S13.1080p | MKV | Ep.04/06 | Dual Áudio")["episodios"] == [4, 5, 6]
+
+    pasta, cliente = _preparar()
+    url = f"{BASE}/visionquest-1a-temporada-2026/"
+    PAGINAS[url] = ('<h1 class="titulo">VisionQuest 1ª Temporada (2026) Torrent Dual Áudio Download</h1>'
+                    + _botao("S01.1080p | MKV | Ep. 01 e 02 | Dual Áudio", 7)
+                    + _botao("S01.1080p | MKV | Ep.03 | Dual Áudio", 8))
+    chave, erro = mt.adicionar_por_link(url)
+    assert erro is None
+    assert mt.baixar_pendentes_de(chave) == (2, None)
+    serie = mt._carregar()[chave]
+    assert set(serie["downloads_em_andamento"]) == {"1-2", "3"}
+    assert mt.baixar_pendentes_de(chave)[0] == 0  # nada repetido
+
+    # Um arquivo com os dois episódios juntos.
+    pasta_temporada = os.path.join(pasta, "Series", "VisionQuest", "Temporada 1")
+    os.makedirs(pasta_temporada, exist_ok=True)
+    with open(os.path.join(pasta_temporada, "VisionQuest.S01E01-02.1080p.mkv"), "wb") as f:
+        f.write(b"x")
+    cliente.torrents[_hash(7)].progress = 1.0
+    cliente.torrents_files = lambda torrent_hash=None: [SimpleNamespace(name="VisionQuest.S01E01-02.1080p.mkv")]
+    assert mt.verificar_downloads() == 1
+    assert os.path.exists(os.path.join(pasta_temporada, "VisionQuest - S01E01-E02.mkv"))
+    serie = mt._carregar()[chave]
+    assert serie["episodios"]["1"] == serie["episodios"]["2"] == "baixado"
+    assert list(serie["downloads_em_andamento"]) == ["3"]
+
+
 if __name__ == "__main__":
+    testar_hash_base32_e_torrent_com_dois_episodios()
     testar_rotulos_e_prioridade()
     testar_fluxo_pendente_like_download_renomeacao()
     testar_travado_troca_pela_proxima_opcao()
