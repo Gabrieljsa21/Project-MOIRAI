@@ -788,8 +788,8 @@ animes (pendente, 👍 baixa, 👎 ignora), sem baixar a home inteira.
 - **Série**: com botão por episódio, baixa cada episódio que falta (a
   temporada toda ao dar 👍, como o backfill dos animes). Sem nenhum, baixa o
   pacote da temporada (`pacote`) e, ao concluir, renomeia cada vídeo com
-  SxxEyy no nome. Destino `<pasta de séries>\<Série>\Temporada N`, arquivo
-  `<Série> - SxxEyy.ext`. **Filme**: `filme`, destino a raiz da pasta de
+  SxxEyy no nome. Destino `<pasta de séries>\<Série>` (sem pasta por
+  temporada desde a 0.3.2, ver abaixo), arquivo `<Série> - SxxEyy.ext`. **Filme**: `filme`, destino a raiz da pasta de
   filmes, arquivo com o título do site (`Verity (2026).mkv`).
 - **Travado**: mesmos prazos dos animes (`anime_download_travado_horas`, 2h
   sem seeder). `_proxima_opcao` procura uma opção não tentada antes de tirar
@@ -816,6 +816,14 @@ animes (pendente, 👍 baixa, 👎 ignora), sem baixar a home inteira.
   um magnet direto publicado sem ":" e "/" (`urnbtih<hash>`,
   `udptracker.opentrackr.org1337announce`): `_reparar_magnet` refaz o
   magnet a partir do hash, com trackers públicos.
+- **Uma pasta por série, sem sobras** (0.3.2, pedido do usuário: "so quero
+  o video"). Sem `Temporada N`: o SxxEyy no nome já separa as
+  temporadas. Depois de tirar o torrent da lista, `_apagar_sobras` apaga
+  `content_path` (a pasta que o torrent criou) se não houver vídeo nela e
+  se ela estiver dentro de `save_path`; o que sobra é propaganda do
+  release. Quando `pasta_destino` muda (regra nova ou config), o loop
+  chama `torrents_set_location` e deixa a conclusão para a volta
+  seguinte, depois que o qBittorrent moveu os arquivos.
 
 Ver `testes/testar_midia_tracker.py`.
 

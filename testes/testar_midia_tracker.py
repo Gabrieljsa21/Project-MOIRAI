@@ -63,6 +63,9 @@ class _ClienteFalso:
     def torrents_info(self, torrent_hashes=None):
         return [self.torrents[torrent_hashes]] if torrent_hashes in self.torrents else []
 
+    def torrents_set_location(self, location=None, torrent_hashes=None):
+        self.torrents[torrent_hashes].save_path = location
+
     def torrents_delete(self, delete_files=False, torrent_hashes=None):
         assert delete_files is False
         self.removidos.append(torrent_hashes)
@@ -114,7 +117,8 @@ def testar_fluxo_pendente_like_download_renomeacao():
     assert mt.baixar_pendentes_de("slow-horses-6a-temporada-2026") == (2, None)
     assert set(cliente.torrents) == {_hash(1), _hash(4)}
     serie = dict(mt.obter_titulos_rastreados())["slow-horses-6a-temporada-2026"]
-    pasta_temporada = os.path.join(pasta, "Series", "Slow Horses", "Temporada 6")
+    # Pedido do usuário: sem pasta por temporada, o vídeo fica direto na pasta da série.
+    pasta_temporada = os.path.join(pasta, "Series", "Slow Horses")
     assert serie["downloads_em_andamento"]["1"]["pasta"] == pasta_temporada
 
     # Filme só com telesync: não baixa e avisa.
@@ -122,11 +126,13 @@ def testar_fluxo_pendente_like_download_renomeacao():
     disparados, aviso = mt.baixar_pendentes_de("verity-2026")
     assert disparados == 0 and "CAM" in aviso and len(cliente.torrents) == 2
 
-    # Conclusão do ep 1: vídeo dentro de uma pasta do torrent vai pra raiz da temporada.
+    # Conclusão do ep 1: o vídeo sai da pasta do torrent para a pasta da série.
     subpasta = os.path.join(pasta_temporada, "Slow.Horses.S06E01.1080p")
     os.makedirs(subpasta)
     with open(os.path.join(subpasta, "Slow.Horses.S06E01.mkv"), "wb") as f:
         f.write(b"x" * 10)
+    for sobra in ("Acesse -StarckFilmes.png", "GRUPO TELEGRAM.url"):  # propaganda do release: apagada
+        open(os.path.join(subpasta, sobra), "wb").close()
     cliente.torrents[_hash(1)].progress = 1.0
     cliente.torrents[_hash(1)].content_path = subpasta
     assert mt.verificar_downloads() == 1
@@ -137,6 +143,19 @@ def testar_fluxo_pendente_like_download_renomeacao():
 
     # Próxima checagem não baixa de novo o que já foi.
     assert mt.verificar_lancamentos()["disparados"] == []
+
+    # Download que começou na pasta antiga (com "Temporada N") é movido pelo qBittorrent.
+    pasta_antiga = os.path.join(pasta_temporada, "Temporada 6")
+    cliente.torrents[_hash(4)].save_path = pasta_antiga
+    mt.verificar_downloads()
+    assert cliente.torrents[_hash(4)].save_path == pasta_temporada
+
+    # Com vídeo ainda dentro, a pasta do torrent nunca é apagada.
+    outra = os.path.join(pasta_temporada, "Outro")
+    os.makedirs(outra)
+    open(os.path.join(outra, "extra.mkv"), "wb").close()
+    mt._apagar_sobras(_Torrent(content_path=outra, save_path=pasta_temporada))
+    assert os.path.exists(os.path.join(outra, "extra.mkv"))
 
     # 👎 enxuga o registro.
     mt.marcar_interesse("verity-2026", "sem_interesse")
@@ -201,7 +220,7 @@ def testar_hash_base32_e_torrent_com_dois_episodios():
     assert mt.baixar_pendentes_de(chave)[0] == 0  # nada repetido
 
     # Um arquivo com os dois episódios juntos.
-    pasta_temporada = os.path.join(pasta, "Series", "VisionQuest", "Temporada 1")
+    pasta_temporada = os.path.join(pasta, "Series", "VisionQuest")
     os.makedirs(pasta_temporada, exist_ok=True)
     with open(os.path.join(pasta_temporada, "VisionQuest.S01E01-02.1080p.mkv"), "wb") as f:
         f.write(b"x")
