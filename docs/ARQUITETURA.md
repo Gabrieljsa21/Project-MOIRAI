@@ -851,7 +851,11 @@ para assistido" e "mesma regra p filme".
   episódio faria o MOIRAI baixar de novo.
 - **Trakt** (`integrations/trakt/trakt_client.py`): fluxo de dispositivo
   (`/oauth/device/code` + consulta a `/oauth/device/token` numa thread,
-  respeitando `interval` e 429), token renovado 1 dia antes de vencer. A
+  respeitando `interval` e 429), token renovado 1 dia antes de vencer (o
+  access token dura 7 dias). Sem `client_secret`: app novo do Trakt não
+  recebe secret (PKCE), o Trakt descontinuou o secret pra login de usuário
+  e o fluxo de dispositivo aceita o pedido sem o campo (`_com_secret` só o
+  manda se existir, pra app antigo). A
   busca usa o título base da série (sem "Nª Temporada (ano)") e, em filme,
   o ano; o primeiro resultado vira `trakt_id`/`trakt_titulo` (mostrado no
   card pra conferir). `_enviar_ao_trakt` junta tudo num `POST /sync/history`

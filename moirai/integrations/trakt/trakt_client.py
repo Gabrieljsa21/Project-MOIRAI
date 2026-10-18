@@ -3,8 +3,10 @@
 assistidos, que o MyAnimeList não cobre (pedido do usuário: "ja q o MAL n tem
 serie, tem outro site p gerenciar os episodios assistidos?").
 
-Opt-in via `TRAKT_CLIENT_ID` e `TRAKT_CLIENT_SECRET` no `.env` da GAIA (o
-MOIRAI herda o ambiente dela). Login pelo fluxo de dispositivo do Trakt: o
+Opt-in via `TRAKT_CLIENT_ID` no `.env` da GAIA (o MOIRAI herda o ambiente
+dela). `TRAKT_CLIENT_SECRET` é opcional: app criado no Trakt desde outubro de
+2026 não recebe secret (PKCE), e o fluxo de dispositivo funciona sem ele, com
+o campo omitido. Login pelo fluxo de dispositivo do Trakt: o
 MOIRAI pede um código, o usuário digita em trakt.tv/activate e o MOIRAI
 consulta a resposta até ela chegar - sem servidor de callback (diferente do
 MAL). Webhook do Trakt é recurso VIP e não é usado: o MOIRAI é quem detecta
@@ -43,7 +45,14 @@ def _client_secret():
 
 
 def esta_configurado():
-    return bool(_client_id() and _client_secret())
+    return bool(_client_id())
+
+
+def _com_secret(corpo):
+    """Só manda `client_secret` se houver: app sem secret recusa o campo vazio."""
+    if _client_secret():
+        corpo["client_secret"] = _client_secret()
+    return corpo
 
 
 def _cabecalhos(token=None):
@@ -94,10 +103,10 @@ def obter_token_valido():
         if time.time() < vence_em - _RENOVAR_ANTES_SEGUNDOS:
             return token["access_token"]
         try:
-            resp = requests.post(f"{URL_API}/oauth/token", headers=_cabecalhos(), timeout=_TIMEOUT, json={
+            resp = requests.post(f"{URL_API}/oauth/token", headers=_cabecalhos(), timeout=_TIMEOUT, json=_com_secret({
                 "refresh_token": token["refresh_token"], "client_id": _client_id(),
-                "client_secret": _client_secret(), "redirect_uri": REDIRECT_URI, "grant_type": "refresh_token",
-            })
+                "redirect_uri": REDIRECT_URI, "grant_type": "refresh_token",
+            }))
             resp.raise_for_status()
         except Exception as e:
             print(f" [SISTEMA] Trakt: não consegui renovar o login ({e}).")
@@ -114,7 +123,7 @@ def iniciar_conexao():
     """Pede o código ao Trakt e começa a esperar a autorização numa thread.
     Devolve o estado ({status, user_code, url, ...}) pra tela mostrar."""
     if not esta_configurado():
-        return {"status": "erro", "erro": "Falta TRAKT_CLIENT_ID e/ou TRAKT_CLIENT_SECRET no .env da GAIA."}
+        return {"status": "erro", "erro": "Falta TRAKT_CLIENT_ID no .env da GAIA."}
     try:
         resp = requests.post(f"{URL_API}/oauth/device/code", headers=_cabecalhos(), timeout=_TIMEOUT,
                              json={"client_id": _client_id()})
@@ -138,9 +147,7 @@ def _esperar_autorizacao(device_code, intervalo):
     while time.time() < fim and estado_conexao.get("status") == "aguardando":
         time.sleep(intervalo)
         try:
-            resp = requests.post(f"{URL_API}/oauth/device/token", headers=_cabecalhos(), timeout=_TIMEOUT, json={
-                "code": device_code, "client_id": _client_id(), "client_secret": _client_secret(),
-            })
+            resp = requests.post(f"{URL_API}/oauth/device/token", headers=_cabecalhos(), timeout=_TIMEOUT, json=_com_secret({"code": device_code, "client_id": _client_id()}))
         except Exception:
             continue
         if resp.status_code == 200:
