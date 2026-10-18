@@ -492,8 +492,11 @@ def _baixar_pendentes(cliente, chave, registro):
         return [], [(registro["titulo"], f"página não abriu: {e}")]
     _atualizar_da_pagina(registro, pagina)
     disparados, falhas = [], []
-    for ident, opcoes in sorted(_idents_a_baixar(registro, pagina["opcoes"]).items(),
-                                key=lambda par: (episodios_do_ident(par[0]) or [0])[0]):
+    a_baixar = _idents_a_baixar(registro, pagina["opcoes"])
+    # Falha de algo que já saiu da fila (baixou, baixado por fora, outra
+    # chave depois da correção de 0.3.1) não vale mais: some do card.
+    registro["falhas_download"] = {k: v for k, v in (registro.get("falhas_download") or {}).items() if k in a_baixar}
+    for ident, opcoes in sorted(a_baixar.items(), key=lambda par: (episodios_do_ident(par[0]) or [0])[0]):
         escolhida, motivo = _disparar(cliente, registro, ident, _proxima_opcao(registro, ident, opcoes, registro["url"]))
         rotulo = _rotulo_ident(registro, ident)
         if escolhida:

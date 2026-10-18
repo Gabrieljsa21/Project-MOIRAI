@@ -13,6 +13,10 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 - **Séries e filmes assistidos, com histórico no Trakt (2026-10-18, pedido do usuário: "ja q o MAL n tem serie, tem outro site p gerenciar os episodios assistidos?", "como serie é pesada, eu so removo, n movo para assistido" e "mesma regra p filme")**: episódio ou filme que o MOIRAI baixou e sumiu da pasta vira "assistido" (`midia_tracker.sincronizar_assistidos`, no loop de downloads; o caminho final fica em `arquivos`, e registro antigo é achado pelo nome). "Assistido" nunca volta pra fila de download. `assistir(chave)` é o ▶️ do card: abre o próximo episódio baixado (ou o filme) no player, e quando a mesma regra do ▶️ dos animes confirma que assistiu, apaga o arquivo e marca. Cliente novo `moirai/integrations/trakt/trakt_client.py`: login pelo fluxo de dispositivo do Trakt (código em trakt.tv/activate, sem servidor de callback; webhook do Trakt é VIP e não é usado), token em `data/trakt_token.json` com renovação, busca por título (o Trakt casa título em português: "A Casa do Dragão" vira House of the Dragon) e `POST /sync/history`. Os pendentes vão numa chamada só; título que o Trakt não acha ou Trakt fora do ar ficam pendentes com `trakt_erro`, e vão na volta seguinte. Rotas novas: `GET /midia/trakt/estado`, `POST /midia/trakt/conectar`, `/midia/trakt/desconectar` e `/midia/assistir`. `anime_tracker.abrir_e_monitorar` foi extraído de `assistir_e_monitorar` pra servir aos dois. Variáveis `TRAKT_CLIENT_ID`/`TRAKT_CLIENT_SECRET` (no `.env` da GAIA, de onde o MOIRAI herda). Coberto por `testes/testar_midia_tracker.py`.
 
+### Corrigido
+
+- **Falha antiga ficava no card**: o aviso de falha de um episódio que já saiu da fila (baixou, foi baixado por fora ou mudou de chave com a correção da 0.3.1, caso real VisionQuest) continuava aparecendo. A cada leitura da página, `_baixar_pendentes` descarta as falhas de quem não está mais na fila.
+
 ## [0.3.2] - 2026-10-17
 
 ### Alterado
