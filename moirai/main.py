@@ -154,6 +154,7 @@ def _loop_downloads():
         try:
             if config.obter_midia_tracker_ativo():
                 midia_tracker.verificar_downloads()  # 🔥 2026-10-17 - lock próprio, ver midia_tracker
+                midia_tracker.sincronizar_assistidos()  # 🔥 2026-10-18 - apagado = assistido, + Trakt
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de downloads de séries/filmes: {e}")
         time.sleep(max(5, config.obter_anime_intervalo_downloads_segundos()))

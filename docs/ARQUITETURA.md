@@ -825,6 +825,43 @@ animes (pendente, 👍 baixa, 👎 ignora), sem baixar a home inteira.
   chama `torrents_set_location` e deixa a conclusão para a volta
   seguinte, depois que o qBittorrent moveu os arquivos.
 
+## Séries e filmes assistidos + Trakt (2026-10-18)
+
+Pedidos do usuário: "ja q o MAL n tem serie, tem outro site p gerenciar os
+episodios assistidos?", depois "como serie é pesada, eu so removo, n movo
+para assistido" e "mesma regra p filme".
+
+- **Trakt, e não Simkl**: desde 30/07/2026 o Trakt só deixa conta VIP criar
+  app de API (apps de contas grátis foram apagados). Cheguei a propor o
+  Simkl, mas o usuário conseguiu criar o app no Trakt e o Client ID
+  respondeu 200 na API, então o plano voltou pro Trakt. Webhook do Trakt é
+  VIP, mas não é necessário: o MOIRAI detecta e chama a API.
+- **Apagado = assistido**: `sincronizar_assistidos` roda no loop de
+  downloads (~30s) e só olha o disco. Episódio "baixado" cujo arquivo sumiu
+  vira "assistido". O caminho final fica em `registro["arquivos"]` desde a
+  conclusão; registro anterior a esta versão é achado pelo nome final
+  (`_caminho_do`). Download em andamento é ignorado. Risco conhecido e
+  combinado: apagar sem assistir também marca.
+- **▶️**: `abrir_e_monitorar` (extraído do ▶️ dos animes) abre no player
+  associado e chama de volta quando o player fecha ou perde o foco por 15s,
+  depois do mínimo de minutos configurado. Aí o MOIRAI apaga o arquivo (é o
+  que o usuário faria) e marca.
+- **"assistido" conta como já baixado** (`_STATUS_JA_TEM`) em
+  `_idents_a_baixar` e no filtro de filmes da checagem; sem isso, apagar um
+  episódio faria o MOIRAI baixar de novo.
+- **Trakt** (`integrations/trakt/trakt_client.py`): fluxo de dispositivo
+  (`/oauth/device/code` + consulta a `/oauth/device/token` numa thread,
+  respeitando `interval` e 429), token renovado 1 dia antes de vencer (o
+  access token dura 7 dias). Sem `client_secret`: app novo do Trakt não
+  recebe secret (PKCE), o Trakt descontinuou o secret pra login de usuário
+  e o fluxo de dispositivo aceita o pedido sem o campo (`_com_secret` só o
+  manda se existir, pra app antigo). A
+  busca usa o título base da série (sem "Nª Temporada (ano)") e, em filme,
+  o ano; o primeiro resultado vira `trakt_id`/`trakt_titulo` (mostrado no
+  card pra conferir). `_enviar_ao_trakt` junta tudo num `POST /sync/history`
+  com `watched_at` = hora em que o arquivo sumiu. Só chama a API quando há
+  pendente ou quando o usuário mexe na tela.
+
 Ver `testes/testar_midia_tracker.py`.
 
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)

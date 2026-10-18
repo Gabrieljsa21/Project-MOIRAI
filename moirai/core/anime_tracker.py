@@ -2830,6 +2830,14 @@ def assistir_e_monitorar(chave, numero_episodio, caminho_arquivo, ao_concluir=No
          suficiente pra pegar esse caso).
     Devolve True se conseguiu abrir E vai monitorar; False se não achou o
     player (cai pro os.startfile normal, sem monitoramento - só abre)."""
+    return abrir_e_monitorar(
+        caminho_arquivo, lambda: _concluir_episodio_assistido(chave, numero_episodio, caminho_arquivo, ao_concluir))
+
+
+def abrir_e_monitorar(caminho_arquivo, ao_assistir):
+    """Parte genérica de assistir_e_monitorar (2026-10-18, extraída pro ▶️ de
+    séries e filmes, core/midia_tracker.py): abre no player e chama
+    `ao_assistir()` quando um dos dois sinais acima confirma que assistiu."""
     comando = _resolver_comando_player(caminho_arquivo)
     if not comando or not os.path.isfile(comando):
         os.startfile(caminho_arquivo)
@@ -2852,7 +2860,7 @@ def assistir_e_monitorar(chave, numero_episodio, caminho_arquivo, ao_concluir=No
 
             if processo.poll() is not None:
                 if tempo_aberto >= limiar_segundos:
-                    _concluir_episodio_assistido(chave, numero_episodio, caminho_arquivo, ao_concluir)
+                    ao_assistir()
                 return
 
             try:
@@ -2865,7 +2873,7 @@ def assistir_e_monitorar(chave, numero_episodio, caminho_arquivo, ao_concluir=No
                 if fora_do_foco_desde is None:
                     fora_do_foco_desde = time.time()
                 elif time.time() - fora_do_foco_desde >= 15 and tempo_aberto >= limiar_segundos:
-                    _concluir_episodio_assistido(chave, numero_episodio, caminho_arquivo, ao_concluir)
+                    ao_assistir()
                     return
             else:
                 fora_do_foco_desde = None
