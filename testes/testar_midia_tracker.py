@@ -177,6 +177,12 @@ def testar_hash_base32_e_torrent_com_dois_episodios():
     base32 = "magnet:?xt=urn:btih:a5dpkmtc4pv56cogiptfz76sct5s2tcz&dn=VisionQuest.S01E01-02.1080p"
     assert mt.hash_do_magnet(base32) == "0746f53262e3ebdf09c643e65cffd214fb2d4c59"
     assert mt.hash_do_magnet(f"magnet:?xt=urn:btih:{'A' * 40}") == "a" * 40
+    # Magnet direto quebrado pelo site (caso real A Casa do Dragão S03E02).
+    quebrado = "magnet:?xt=urnbtih3ed507635a30562c5a75272b4dede0fb66890e15&tr=udptracker.opentrackr.org1337announce"
+    assert mt.hash_do_magnet(quebrado) == "3ed507635a30562c5a75272b4dede0fb66890e15"
+    reparado = mt._reparar_magnet(quebrado)
+    assert reparado.startswith("magnet:?xt=urn:btih:3ed507635a30562c5a75272b4dede0fb66890e15&tr=udp://")
+    assert mt._reparar_magnet(base32) == base32
     assert mt.interpretar_rotulo("S01.1080p | MKV | Ep. 01 e 02 | Dual Áudio")["episodios"] == [1, 2]
     assert mt.interpretar_rotulo("S01.1080p | Episódios 01 a 03 | Dual Áudio")["episodios"] == [1, 2, 3]
     assert mt.interpretar_rotulo("S06.1080p | MKV | Ep.05 - 720p")["episodios"] == [5]

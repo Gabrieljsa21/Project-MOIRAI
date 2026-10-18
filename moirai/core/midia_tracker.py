@@ -234,15 +234,37 @@ def hash_do_magnet(magnet):
     devolve. Aceita também o hash em base32 (32 caracteres), que o site usa
     em parte dos magnets (caso real VisionQuest, 2026-10-17: o MOIRAI dava
     "todas as opções da página já travaram ou não abriram")."""
-    m = re.search(r"btih:([A-Za-z0-9]+)", magnet or "")
+    # ":" opcional: magnet quebrado pelo site vem como "urnbtih<hash>" (ver _reparar_magnet).
+    m = re.search(r"btih:?([0-9a-fA-F]{40}|[A-Za-z2-7]{32})(?![A-Za-z0-9])", magnet or "", re.IGNORECASE)
     if not m:
         return None
     valor = m.group(1)
-    if re.fullmatch(r"[0-9a-fA-F]{40}", valor):
+    if len(valor) == 40:
         return valor.lower()
-    if re.fullmatch(r"[A-Za-z2-7]{32}", valor):
-        return base64.b32decode(valor.upper()).hex()
-    return None
+    return base64.b32decode(valor.upper()).hex()
+
+
+# Trackers públicos para o magnet reconstruído; o qBittorrent também acha
+# pares pelo DHT.
+_TRACKERS_PUBLICOS = (
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+)
+
+
+def _reparar_magnet(magnet):
+    """Parte dos botões é um magnet direto que o site publica sem ":" e "/"
+    ("magnet:?xt=urnbtih3ed5...&tr=udptracker.opentrackr.org1337announce",
+    caso real A Casa do Dragão S03E02, 2026-10-17). O hash continua inteiro,
+    então o magnet é refeito a partir dele, com trackers públicos."""
+    if "urn:btih:" in magnet.lower():
+        return magnet
+    hash_torrent = hash_do_magnet(magnet)
+    if not hash_torrent:
+        return None
+    return f"magnet:?xt=urn:btih:{hash_torrent}" + "".join(f"&tr={t}" for t in _TRACKERS_PUBLICOS)
 
 
 def chave_qualidade(opcao):
@@ -282,7 +304,7 @@ def resolver_magnet(link, url_pagina):
     """`/link.php?id=...` devolve uma página com o magnet no HTML (sem
     redirecionamento nem desafio). None se não achar."""
     if link.startswith("magnet:"):
-        return link
+        return _reparar_magnet(link)
     try:
         resp = requests.get(link, headers={"User-Agent": at.USER_AGENT, "Referer": url_pagina}, timeout=at._TIMEOUT_REQUEST)
         resp.raise_for_status()

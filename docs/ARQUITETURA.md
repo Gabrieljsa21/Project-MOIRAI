@@ -812,7 +812,10 @@ animes (pendente, 👍 baixa, 👎 ignora), sem baixar a home inteira.
   `episodios` da opção, e o download fica sob a chave "1-2". Um botão de
   vários episódios só é usado se algum episódio que falta não tiver botão
   próprio (senão baixa um por um). Na conclusão, cada vídeo é renomeado pelo
-  SxxEyy do próprio nome, como o pacote da temporada.
+  SxxEyy do próprio nome, como o pacote da temporada. Parte dos botões é
+  um magnet direto publicado sem ":" e "/" (`urnbtih<hash>`,
+  `udptracker.opentrackr.org1337announce`): `_reparar_magnet` refaz o
+  magnet a partir do hash, com trackers públicos.
 
 Ver `testes/testar_midia_tracker.py`.
 
