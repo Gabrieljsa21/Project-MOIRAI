@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-24
+
+### Corrigido
+
+- **Episódio apagado da pasta do anime finalizado não contava como assistido (2026-10-24, pedido do usuário: "morai tem de conseguir identificar q terminei de assistir E:\Downloads\Anime\2026 4-Outono\Super no Ura de Yani Suu Futari")**: o usuário assiste na pasta `Anime\{AAAA N-Estação}\{Título}` e apaga o arquivo, e a varredura tratava isso como "apagado sem assistir", revertendo o episódio a "nunca baixado" (Super no Ura de Yani Suu Futari teve 9 episódios revertidos). `sincronizar_biblioteca_local` agora guarda em `episodios_na_pasta_do_anime` os episódios vistos por último nessa pasta; o que some de lá vira "assistido", e o MAL conclui o anime no loop seguinte. Sumir da raiz de downloads continua revertendo. Coberto por `testes/testar_anime_finalizado_pasta.py`.
+
 ## [0.4.1] - 2026-10-18
 
 ### Corrigido

@@ -3013,9 +3013,11 @@ def sincronizar_biblioteca_local():
     # Pasta de anime finalizado (organizar_animes_finalizados) fica dentro da
     # de assistidos, mas o que está nela conta como baixado.
     pastas_temporada = _pastas_de_temporada()
+    na_pasta_do_anime = {}
     for pasta_temporada in pastas_temporada:
         for titulo_sanitizado, numeros in _mapear_arquivos_por_titulo(pasta_temporada).items():
             baixados.setdefault(titulo_sanitizado, set()).update(numeros)
+            na_pasta_do_anime.setdefault(titulo_sanitizado, set()).update(numeros)
     assistidos = _mapear_arquivos_por_titulo(obter_anime_pasta_assistidos(), ignorar=pastas_temporada)
 
     mudou = False
@@ -3051,14 +3053,37 @@ def sincronizar_biblioteca_local():
         # dicts "_em" acima) - NÃO apaga `episodios_baixado_em`/
         # `episodios_renomeado_em` (fica registrado que já existiu, útil pra
         # investigar depois), só anota a reversão num dict próprio.
+        #
+        # 🔥 2026-10-24, pedido do usuário ("morai tem de conseguir
+        # identificar q terminei de assistir E:\Downloads\Anime\2026
+        # 4-Outono\Super no Ura de Yani Suu Futari"): na pasta do anime
+        # finalizado o hábito é assistir e apagar, sem mover. Episódio visto
+        # por último nessa pasta (`episodios_na_pasta_do_anime`) que sumiu
+        # vira "assistido"; só o que sumiu da raiz de downloads é revertido.
+        registro_pasta = set(animes[chave].get("episodios_na_pasta_do_anime", []))
+        registro_pasta.update(str(n) for n in na_pasta_do_anime.get(titulo_sanitizado, ()))
         numeros_no_disco = baixados.get(titulo_sanitizado, set()) | assistidos.get(titulo_sanitizado, set())
         datas_revertido = animes[chave].setdefault("episodios_revertido_em", {})
         for chave_ep in [c for c, status in episodios.items() if status == "baixado" and int(c) not in numeros_no_disco]:
+            if chave_ep in registro_pasta:
+                episodios[chave_ep] = "assistido"
+                datas_assistido[chave_ep] = datetime.now().strftime("%Y-%m-%d")
+                print(f" [SISTEMA] 🎬 {animes[chave]['titulo']} Episódio {chave_ep} apagado da pasta do anime: marcado como assistido.")
+                mudou = True
+                continue
             del episodios[chave_ep]
             datas_revertido[chave_ep] = (
                 f"{datetime.now().strftime('%Y-%m-%d %H:%M')}: arquivo não encontrado em nenhuma "
                 f"das 2 pastas (apagado sem mover pra assistidos)"
             )
+            mudou = True
+        registro_pasta = sorted(
+            (c for c in registro_pasta if episodios.get(c) == "baixado"), key=int)
+        if registro_pasta != animes[chave].get("episodios_na_pasta_do_anime", []):
+            if registro_pasta:
+                animes[chave]["episodios_na_pasta_do_anime"] = registro_pasta
+            else:
+                animes[chave].pop("episodios_na_pasta_do_anime", None)
             mudou = True
 
     if mudou:
