@@ -135,6 +135,40 @@ def testar_pasta_do_anime_conta_como_baixado_e_assistido_fica_no_lugar():
     assert at.obter_primeiro_episodio_baixado("velho")[0] == 2
 
 
+def testar_apagado_da_pasta_do_anime_conta_como_assistido():
+    """Caso real 2026-10-24 (Super no Ura de Yani Suu Futari): o usuário
+    assiste na pasta do anime e apaga. Sumiu de lá vira "assistido"; sumiu
+    da raiz de downloads continua revertendo."""
+    downloads, assistidos = _preparar({
+        "velho": {"titulo": "Anime Velho", "interesse": "tenho_interesse", "temporada_estreia": "Outono 2022",
+                  "episodios": {}, "downloads_em_andamento": {}},
+    })
+    pasta_anime = os.path.join(assistidos, "2026 3-Verão", "Anime Velho")
+    os.makedirs(pasta_anime)
+    _criar(pasta_anime, "Anime Velho - S01E01.mkv")
+    _criar(pasta_anime, "Anime Velho - S01E02.mkv")
+    _criar(downloads, "Anime Velho - S01E03.mkv")
+
+    at.sincronizar_biblioteca_local()
+    registro = at._carregar_animes()["velho"]
+    assert registro["episodios_na_pasta_do_anime"] == ["1", "2"]
+
+    os.remove(os.path.join(pasta_anime, "Anime Velho - S01E01.mkv"))
+    os.remove(os.path.join(downloads, "Anime Velho - S01E03.mkv"))
+    at.sincronizar_biblioteca_local()
+    registro = at._carregar_animes()["velho"]
+    assert registro["episodios"] == {"1": "assistido", "2": "baixado"}
+    assert "1" in registro["episodios_assistido_em"]
+    assert "3" in registro["episodios_revertido_em"] and "1" not in registro["episodios_revertido_em"]
+    assert registro["episodios_na_pasta_do_anime"] == ["2"]
+
+    os.remove(os.path.join(pasta_anime, "Anime Velho - S01E02.mkv"))
+    at.sincronizar_biblioteca_local()
+    registro = at._carregar_animes()["velho"]
+    assert registro["episodios"] == {"1": "assistido", "2": "assistido"}
+    assert "episodios_na_pasta_do_anime" not in registro
+
+
 if __name__ == "__main__":
     for nome, funcao in list(globals().items()):
         if nome.startswith("testar_"):

@@ -441,6 +441,15 @@ estação: 1-Inverno (jan-mar), 2-Primavera (abr-jun), 3-Verão (jul-set),
   o status sem mover) ou do Painel ("último assistido"); a varredura nunca
   rebaixa "assistido". `obter_primeiro_episodio_baixado` também procura
   nessas pastas.
+- **Apagado da pasta do anime = assistido (2026-10-24).** Na pasta do
+  anime o hábito do usuário é assistir e apagar, sem mover nem usar o
+  player do MOIRAI (caso real: Super no Ura de Yani Suu Futari, 9 episódios
+  revertidos a "nunca baixado" entre 05 e 08/10). `sincronizar_biblioteca_
+  local` guarda em `episodios_na_pasta_do_anime` os episódios "baixado"
+  vistos por último numa pasta de temporada; se um deles some do disco,
+  vira "assistido" com data em `episodios_assistido_em`, e o loop do MAL
+  conclui o anime normalmente. Sumir da raiz de downloads continua
+  revertendo, como antes. O campo some do registro quando fica vazio.
 
 ## Aviso do download manual e episódio 0 (2026-09-25)
 
