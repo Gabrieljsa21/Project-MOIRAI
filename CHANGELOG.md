@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-11-03
+
+### Corrigido
+
+- **Anime não baixava: "Nenhum dos 2 downloads tentados deu certo" (2026-11-03, alerta da GAIA)**: o encurtador `otakufilmes.org` tirou o token `flow` literal do JavaScript da segunda etapa e passou a entregá-lo no JSON `<script id="centralAdConfig">` (campo `nonce`; o JS agora manda `{flow: cfg.nonce}`). Toda resolução caía em "segunda etapa sem token flow" e o episódio em "nenhum magnet na página do anime" (casos reais: Kyouran Reijou Nia Liston E05 e Tsuihou Sareta Cheat Fuyo Majutsushi E05). `_token_flow_encurtador` lê o `nonce` e mantém o formato antigo como reserva. O resto do fluxo (duas contagens de 15s, `POST ?action=resolve`) não mudou. Coberto por `testes/testar_link_encurtador.py`, que agora testa os dois formatos.
+
 ## [0.4.2] - 2026-10-24
 
 ### Corrigido

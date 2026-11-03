@@ -32,8 +32,16 @@ class _Resposta:
         return self._json
 
 
+# Formato desde 2026-11-03: token no JSON centralAdConfig (campo nonce).
+ETAPA2_NONCE = ('<script id="centralAdConfig" type="application/json">'
+                '{"secure":true,"remainingSeconds":15,"nonce":"abc123"}</script>'
+                "<script>body:new URLSearchParams({flow:cfg.nonce})</script>")
+ETAPA2_LITERAL = 'body:new URLSearchParams({flow:"abc123"})'  # formato de 2026-10-18
+
+
 class _SessaoFalsa:
     acessos = []
+    etapa2 = ETAPA2_NONCE
 
     def __init__(self):
         self.headers, self.posts = {}, 0
@@ -41,7 +49,7 @@ class _SessaoFalsa:
     def get(self, url, **kw):
         _SessaoFalsa.acessos.append(url)
         if "step=download" in url:
-            return _Resposta('body:new URLSearchParams({flow:"abc123"})')
+            return _Resposta(_SessaoFalsa.etapa2)
         return _Resposta("Etapa 1 de 2")
 
     def post(self, url, data=None, **kw):
@@ -60,6 +68,7 @@ def _preparar():
     at._falhas_encurtador.clear()
     at.requests.Session = _SessaoFalsa
     _SessaoFalsa.acessos = []
+    _SessaoFalsa.etapa2 = ETAPA2_NONCE
     at._obter_html_darkmahou = lambda url: at._normalizar_blocos_download(PAGINA)
 
 
@@ -68,6 +77,12 @@ def testar_encurtador_vira_magnet_e_falha_sai():
     opcoes = at._extrair_opcoes_download("https://darkmahou.io/x/", 4)
     assert opcoes == [("1080p", MAGNET, None)], opcoes
     assert at._hash_da_opcao(opcoes[0][1]) == "96b913663cd51de9d283f39ea54164d37734021f"
+
+
+def testar_token_no_formato_antigo_continua_valendo():
+    _preparar()
+    _SessaoFalsa.etapa2 = ETAPA2_LITERAL
+    assert at._extrair_opcoes_download("https://darkmahou.io/x/", 4) == [("1080p", MAGNET, None)]
 
 
 def testar_magnet_resolvido_fica_em_cache():
