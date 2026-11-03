@@ -1132,6 +1132,23 @@ def _magnet_encurtado_em_cache(url):
         return _carregar_links_encurtados().get(url)
 
 
+def _token_flow_encurtador(html):
+    """Token `flow` da segunda etapa. Desde 2026-11-03 ele vem no JSON
+    `<script id="centralAdConfig">` (campo `nonce`, o JS manda
+    `{flow: cfg.nonce}`); antes era literal no JS (`flow:"..."`), mantido
+    como reserva caso o site volte ao formato antigo."""
+    config = re.search(r'id=["\']centralAdConfig["\'][^>]*>(.*?)</script>', html, re.DOTALL)
+    if config:
+        try:
+            nonce = json.loads(config.group(1)).get("nonce")
+        except ValueError:
+            nonce = None
+        if nonce:
+            return str(nonce)
+    literal = re.search(r'flow:"([0-9a-f]+)"', html)
+    return literal.group(1) if literal else None
+
+
 def _resolver_link_encurtado(url):
     """Magnet por trás de um link do encurtador, ou None em qualquer falha
     (a falha fica em cache por `_SEGUNDOS_CACHE_FALHA_TORRENT`)."""
@@ -1148,12 +1165,12 @@ def _resolver_link_encurtado(url):
         url_etapa2 = f"{url}&step=download&site="
         resp = sessao.get(url_etapa2, timeout=_TIMEOUT_REQUEST)
         resp.raise_for_status()
-        flow = re.search(r'flow:"([0-9a-f]+)"', resp.text)
+        flow = _token_flow_encurtador(resp.text)
         if not flow:
             raise RuntimeError("segunda etapa sem token flow")
         for _ in range(_TENTATIVAS_RESOLVER_ENCURTADOR):
             time.sleep(_SEGUNDOS_CONTAGEM_ENCURTADOR)
-            dados = sessao.post(f"{url_etapa2}&action=resolve", data={"flow": flow.group(1)},
+            dados = sessao.post(f"{url_etapa2}&action=resolve", data={"flow": flow},
                                 timeout=_TIMEOUT_REQUEST).json()
             if dados.get("success") and str(dados.get("url", "")).startswith("magnet:"):
                 break

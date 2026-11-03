@@ -886,6 +886,11 @@ O DarkMahou trocou o `href` de cada opção (`div.dm-hosts > a`) de
   `flow=...`) responde `{"success": true, "url": "magnet:..."}`. Antes da
   contagem, `{"error": "countdown_pending", "retry_after": N}`. A verificação
   de bloqueador de anúncios é só no navegador.
+- Desde 2026-11-03 o token não aparece mais literal no JS (`flow:"..."`): vem
+  no JSON `<script id="centralAdConfig">`, campo `nonce` (o mesmo nas duas
+  etapas), e o JS faz `{flow: cfg.nonce}`. `_token_flow_encurtador` lê o
+  `nonce` primeiro e cai no formato antigo se o JSON não existir. Sintoma da
+  troca: log "segunda etapa sem token flow".
 - `_PADRAO_LINK_DOWNLOAD` aceita o link do encurtador, então os leitores de
   bloco continuam iguais. `_extrair_opcoes_download` (agora um invólucro de
   `_opcoes_download_na_pagina`) e `_opcoes_pacote_completo` passam as opções por
