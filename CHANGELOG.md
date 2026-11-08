@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-08
+
+### Corrigido
+
+- **Animes concluídos no MAL sem terem sido vistos (2026-11-08, alerta da GAIA: Witch Watch, Kusuriya no Hitorigoto 2ª Temporada e mais 10)**: a padronização da legenda pt-BR (0.5.0) gravava o arquivo remuxado com o nome todo em minúsculas, porque usava o caminho em `normcase` como destino. A biblioteca local deixava de reconhecer o episódio e, na pasta do anime finalizado, tratava como apagado, ou seja, assistido. Agora o remux mantém o nome real; os 252 nomes foram restaurados e os estados revertidos. Nenhum arquivo foi apagado. `testes/testar_legenda_padrao_pt_br.py` passou a conferir o nome preservado.
+
 ## [0.5.0] - 2026-11-07
 
 ### Adicionado

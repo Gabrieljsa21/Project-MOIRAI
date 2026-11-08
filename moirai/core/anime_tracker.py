@@ -3798,14 +3798,20 @@ def padronizar_legendas_pt_br(dry_run=False):
             arquivos += [os.path.join(raiz, n) for n in nomes]
     arquivos = [a for a in arquivos if a.lower().endswith(".mkv")
                 and _PADRAO_NOME_ARQUIVO.match(os.path.basename(a)) and os.path.isfile(a)]
-    pendentes = []
-    for caminho in dict.fromkeys(os.path.normcase(os.path.abspath(a)) for a in arquivos):
+    # 🔥 2026-11-08, bug real: o caminho em normcase (minúsculas no Windows)
+    # ia até o os.replace e o arquivo ficava com o nome todo minúsculo; a
+    # biblioteca local não reconhecia mais o episódio, tratava como apagado
+    # da pasta do anime e marcava assistido (12 animes concluídos no MAL sem
+    # terem sido vistos). normcase só serve de chave; o remux usa o nome real.
+    pendentes = {}
+    for real in arquivos:
+        caminho = os.path.normcase(os.path.abspath(real))
         try:
-            estado = (os.path.getsize(caminho), os.path.getmtime(caminho))
+            estado = (os.path.getsize(real), os.path.getmtime(real))
         except OSError:
             continue
-        if _legendas_conferidas.get(caminho) != estado:
-            pendentes.append((caminho, estado))
+        if caminho not in pendentes and _legendas_conferidas.get(caminho) != estado:
+            pendentes[caminho] = (os.path.abspath(real), estado)
     if not pendentes:
         return []
     try:
@@ -3815,18 +3821,18 @@ def padronizar_legendas_pt_br(dry_run=False):
         return []
 
     mudados = []
-    for caminho, estado in pendentes:
+    for caminho, (real, estado) in pendentes.items():
         if caminho in em_torrent:
             continue  # ainda semeando - volta quando sair do qBittorrent
         try:
-            faixas = _faixas_legenda(caminho)
+            faixas = _faixas_legenda(real)
         except FileNotFoundError:
             print(" [SISTEMA] Legenda pt-BR: ffprobe/ffmpeg não encontrado no PATH.")
             return mudados
         except Exception as e:
             # Arquivo ilegível (caso real: .mkv com cabeçalho zerado) não volta
             # a cada 30s; só se mudar de tamanho/data.
-            print(f" [SISTEMA] Legenda pt-BR: não consegui ler as faixas de {caminho}: {str(e).strip()[-150:]}")
+            print(f" [SISTEMA] Legenda pt-BR: não consegui ler as faixas de {real}: {str(e).strip()[-150:]}")
             _legendas_conferidas[caminho] = estado
             continue
         posicao = _posicao_legenda_pt_br(faixas) if faixas is not None else None
@@ -3835,16 +3841,16 @@ def padronizar_legendas_pt_br(dry_run=False):
         if ja_certo:
             _legendas_conferidas[caminho] = estado
             continue
-        mudados.append((caminho, faixas[posicao]["title"] or faixas[posicao]["lang"]))
+        mudados.append((real, faixas[posicao]["title"] or faixas[posicao]["lang"]))
         if dry_run:
             continue
         try:
-            _marcar_legenda_padrao(caminho, posicao)
-            _legendas_conferidas[caminho] = (os.path.getsize(caminho), os.path.getmtime(caminho))
-            print(f" [SISTEMA] Legenda pt-BR marcada como padrão: {os.path.basename(caminho)}")
+            _marcar_legenda_padrao(real, posicao)
+            _legendas_conferidas[caminho] = (os.path.getsize(real), os.path.getmtime(real))
+            print(f" [SISTEMA] Legenda pt-BR marcada como padrão: {os.path.basename(real)}")
         except Exception as e:
             mudados.pop()
-            print(f" [SISTEMA] Legenda pt-BR: não consegui marcar em {os.path.basename(caminho)} (em uso?), tento de novo depois: {e}")
+            print(f" [SISTEMA] Legenda pt-BR: não consegui marcar em {os.path.basename(real)} (em uso?), tento de novo depois: {e}")
     return mudados
 
 

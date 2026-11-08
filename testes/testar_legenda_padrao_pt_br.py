@@ -52,15 +52,17 @@ def testar_varredura_pula_torrent_ativo_e_o_que_ja_esta_certo():
         at.obter_anime_pasta_downloads = lambda: pasta
         at.obter_anime_pasta_assistidos = lambda: ""
         at._arquivos_em_torrents_ativos = lambda: {caminho(nomes[3])}
-        at._faixas_legenda = lambda c: faixas[c]
+        at._faixas_legenda = lambda c: faixas[os.path.normcase(c)]
         at._marcar_legenda_padrao = lambda c, pos: marcados.append((os.path.basename(c), pos))
         at._legendas_conferidas.clear()
-        assert [os.path.basename(c) for c, _ in at.padronizar_legendas_pt_br(dry_run=True)] == ["anime a - s01e01.mkv"]
+        # Nome real preservado (bug 2026-11-08: o normcase deixava o arquivo
+        # todo em minúsculas e a biblioteca local deixava de reconhecer).
+        assert [os.path.basename(c) for c, _ in at.padronizar_legendas_pt_br(dry_run=True)] == ["Anime A - S01E01.mkv"]
         assert marcados == []
         at.padronizar_legendas_pt_br()
-        assert marcados == [("anime a - s01e01.mkv", 1)], marcados
+        assert marcados == [("Anime A - S01E01.mkv", 1)], marcados
         # Segunda volta: tudo conferido, nada é lido de novo (o semeando continua pendente).
-        at._faixas_legenda = lambda c: (_ for _ in ()).throw(AssertionError(c)) if c != caminho(nomes[3]) else faixas[c]
+        at._faixas_legenda = lambda c: (_ for _ in ()).throw(AssertionError(c)) if os.path.normcase(c) != caminho(nomes[3]) else faixas[os.path.normcase(c)]
         at.padronizar_legendas_pt_br()
         assert len(marcados) == 1
     finally:
@@ -85,6 +87,7 @@ def testar_remux_real_com_ffmpeg():
         antes = at._faixas_legenda(mkv)
         assert [f["default"] for f in antes] == [True, False], antes
         at._marcar_legenda_padrao(mkv, 1)
+        assert "Anime - S01E01.mkv" in os.listdir(pasta), os.listdir(pasta)
         depois = at._faixas_legenda(mkv)
         assert [f["default"] for f in depois] == [False, True], depois
         assert [f["lang"] for f in depois] == ["eng", "por"]
