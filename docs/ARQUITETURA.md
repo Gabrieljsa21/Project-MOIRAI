@@ -939,6 +939,20 @@ porque a faixa padrão dos releases da Crunchyroll é a inglesa.
 
 Ver `testes/testar_legenda_pt_br.py` e `testes/testar_legenda_padrao_pt_br.py`.
 
+### Correção 0.5.1 (2026-11-08): o remux deixava o nome em minúsculas
+
+A varredura usava o caminho em `os.path.normcase` (minúsculas no Windows) como
+chave e também como destino do `os.replace`, e os 252 episódios padronizados
+ficaram com o nome todo minúsculo. `_PADRAO_NOME_ARQUIVO` e a comparação de
+título diferenciam maiúsculas, então a biblioteca local deixou de reconhecer
+os arquivos: na pasta do anime finalizado isso vira "apagado = assistido" e
+12 animes foram concluídos no MAL sem terem sido vistos; na raiz de downloads,
+os "baixado" voltaram a "nunca baixado". Nenhum arquivo foi apagado (a limpeza
+pós-conclusão também compara com maiúsculas). Agora `normcase` só serve de
+chave (cache e comparação com os torrents ativos) e o ffprobe/remux usam o
+caminho real. Os nomes foram restaurados a partir do título do registro, os
+estados revertidos pelo log e o progresso no MAL desfeito.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
