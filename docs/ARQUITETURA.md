@@ -953,6 +953,22 @@ chave (cache e comparação com os torrents ativos) e o ffprobe/remux usam o
 caminho real. Os nomes foram restaurados a partir do título do registro, os
 estados revertidos pelo log e o progresso no MAL desfeito.
 
+## Pasta de assistidos com só o último episódio (2026-11-08)
+
+Pedido do usuário: a raiz da pasta de assistidos acumulava todos os episódios
+vistos. `limpar_assistidos_antigos` roda no `_loop_manutencao`, sob
+`lock_estado_animes`, logo depois de `sincronizar_biblioteca_local` e
+`sincronizar_progresso_mal`. Para cada título do registro, mantém o maior
+episódio da raiz e manda os anteriores para a Lixeira (`SHFileOperationW` com
+`FOF_ALLOWUNDO`, sem diálogo), não `os.remove`: é a segunda exceção à regra
+"nunca apagar arquivo" e precisa ser recuperável. Salvaguardas:
+
+- só a raiz; subpastas (temporada de anime finalizado, `_Pausados`) ficam fora;
+- só episódio com status "assistido" no registro, então a varredura nunca o
+  reverte nem baixa de novo (status "assistido" nunca é rebaixado);
+- arquivo sem anime correspondente no registro não é tocado;
+- falha (arquivo aberto no player) só registra no log e tenta na próxima volta.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
