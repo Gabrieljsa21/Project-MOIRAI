@@ -940,7 +940,7 @@ def formatar_texto_pendentes(pendentes):
 _PADRAO_SEM_CENSURA = re.compile(r"sem\s+censura|uncensored", re.IGNORECASE)
 
 
-def _escolher_melhor_magnet(opcoes, numero_episodio=None):
+def _escolher_melhor_magnet(opcoes, numero_episodio=None, avaliar_pt_br=None):
     """`opcoes`: [(rotulo, magnet), ...] da primeira linha (legendado) da tabela de
     download. Prioriza 1080p+HEVC > 1080p (qualquer encoder) > primeira opção
     disponível, nessa ordem - pedido do usuário ("priorizando os 1080p HEVC").
@@ -963,9 +963,21 @@ def _escolher_melhor_magnet(opcoes, numero_episodio=None):
     Opções de lote (3º elemento `(inicio, fim)`, ver _extrair_opcoes_download)
     perdem para episódio avulso no mesmo nível, e lote menor ganha de lote
     maior - só o arquivo pedido é baixado, mas lote menor é menos torrent
-    pra buscar metadado e semear."""
+    pra buscar metadado e semear.
+
+    🔥 Legenda pt-BR logo depois do sem censura (2026-11-07, caso real
+    Tougen Anki: Nikko Kegon no Taki-hen E06, pedido do usuário: "padronizar
+    as legendas pt br"): `avaliar_pt_br(rotulo, link)` devolve True (tem),
+    False (confirmado sem) ou None (não dá pra saber); confirmado ganha de
+    desconhecido, que ganha de confirmado sem. Sem a função (testes antigos,
+    sem rede) o critério empata e nada muda. Ver _legenda_pt_br."""
     if not opcoes:
         return None
+
+    def nota_pt_br(par):
+        if avaliar_pt_br is None:
+            return 1
+        return {True: 2, None: 1, False: 0}[avaliar_pt_br(par[0], par[1])]
 
     def tamanho_lote(par):
         lote = par[2] if len(par) > 2 else None
@@ -989,7 +1001,8 @@ def _escolher_melhor_magnet(opcoes, numero_episodio=None):
 
     # max() devolve o PRIMEIRO empate - mantém a ordem da página como último critério.
     return max(opcoes, key=lambda par: (
-        sem_censura(par[0], par[1]), pontuar(par[0]), numero_bate(par[1]), -tamanho_lote(par)))[1]
+        sem_censura(par[0], par[1]), nota_pt_br(par), pontuar(par[0]), numero_bate(par[1]),
+        -tamanho_lote(par)))[1]
 
 
 def _opcao_sem_censura(rotulo, magnet):
@@ -1354,13 +1367,83 @@ def _opcoes_nyaa(registro, numero_episodio):
     for nome, link, seeders in _buscar_nyaa(f"{_normalizar_titulo_busca(titulo_base)} {int(numero_episodio):02d}"):
         nome_normalizado = _normalizar_titulo_busca(nome).split()
         if (seeders < 1 or not link.endswith(".torrent") or _PADRAO_NYAA_DESCARTAR.search(nome)
-                or not _PADRAO_LEGENDA_PT_BR.search(nome)
                 or not all(p in nome_normalizado for p in palavras)
                 or _episodio_do_nome_nyaa(nome) != int(numero_episodio)
                 or _temporada_do_nome_nyaa(nome) != temporada):
             continue
+        # Nome com POR-BR resolve na hora; o "[MultiSub]" da Erai atual, só
+        # pela descrição do release.
+        if not _PADRAO_LEGENDA_PT_BR.search(nome):
+            match = _PADRAO_ID_NYAA.search(link)
+            if not (match and _legenda_pt_br_na_pagina_nyaa(match.group(1)) is True):
+                continue
         opcoes.append((f"nyaa ({seeders} seeders): {nome}", link, None))
     return opcoes
+
+
+# ======================================================
+# 🇧🇷 LEGENDA pt-BR DE CADA OPÇÃO
+# ======================================================
+# 🔥 2026-11-07, caso real (Tougen Anki: Nikko Kegon no Taki-hen E06): a
+# única opção da página na hora era o rip da VARYG ("Multi-Subs", 12
+# legendas da Crunchyroll, nenhuma em português); depois o site ganhou
+# Erai-raws com pt-BR. O nome quase nunca diz quais legendas vêm
+# ("[MultiSub]", "Multi-Subs"), mas a descrição do release no nyaa lista
+# (Erai: "Portuguese (CR_Portuguese(Brazil))"; VARYG: "Subtitles (12):").
+# Descrição com lista de legendas sem português = confirmado sem pt-BR;
+# sem lista (Judas) ou fora do nyaa (fansub brasileiro) = não dá pra saber.
+_PADRAO_PT_BR_DESCRICAO = re.compile(r"Portugu|POR-BR|PT-BR|pt_BR", re.IGNORECASE)
+_PADRAO_LISTA_LEGENDAS = re.compile(r"Subtitles?\W{0,5}(?:Info|\(\d+\))|Subtitles?\s*:", re.IGNORECASE)
+_PADRAO_ID_NYAA = re.compile(r"/(?:download|view)/(\d+)")
+_cache_pt_br_nyaa = {}
+
+
+def _legenda_pt_br_na_pagina_nyaa(id_nyaa):
+    """True/False/None pela descrição de nyaa.si/view/<id>. A resposta fica
+    em cache pelo resto do processo (a descrição não muda); falha de rede
+    não entra no cache."""
+    if id_nyaa in _cache_pt_br_nyaa:
+        return _cache_pt_br_nyaa[id_nyaa]
+    try:
+        resp = _get_nyaa_com_espelho(f"https://nyaa.si/view/{id_nyaa}", params=None)
+        descricao = BeautifulSoup(resp.text, "html.parser").find(id="torrent-description")
+        texto = descricao.get_text(" ", strip=True) if descricao else ""
+    except Exception as e:
+        print(f" [SISTEMA] Não consegui ler a descrição do nyaa {id_nyaa}: {e}")
+        return None
+    if _PADRAO_PT_BR_DESCRICAO.search(texto):
+        resultado = True
+    elif _PADRAO_LISTA_LEGENDAS.search(texto):
+        resultado = False
+    else:
+        resultado = None
+    _cache_pt_br_nyaa[id_nyaa] = resultado
+    return resultado
+
+
+def _id_nyaa_do_nome(nome):
+    """Id do release no nyaa com exatamente esse nome (busca RSS), ou None.
+    Nome longo (VARYG: "... AAC2.0 H.264-VARYG (Tougen Anki: ..., Multi-Subs)")
+    não volta nada na busca inteira; aí tenta só as primeiras palavras."""
+    alvo = _normalizar_titulo_busca(nome)
+    for consulta in dict.fromkeys([alvo, " ".join(alvo.split()[:6])]):
+        for titulo, link, _ in _buscar_nyaa(consulta):
+            match = _PADRAO_ID_NYAA.search(link)
+            if match and _normalizar_titulo_busca(titulo) == alvo:
+                return match.group(1)
+    return None
+
+
+def _legenda_pt_br(rotulo, link):
+    """True (tem legenda pt-BR), False (confirmado sem) ou None (não dá pra
+    saber). Nome/rótulo com POR-BR/PT-BR resolve na hora; senão, descrição
+    do release no nyaa (pelo próprio link quando é .torrent do nyaa)."""
+    nome = _nome_da_opcao(link)
+    if _PADRAO_LEGENDA_PT_BR.search(f"{rotulo} {nome}"):
+        return True
+    match = _PADRAO_ID_NYAA.search(link) if "nyaa." in link else None
+    id_nyaa = match.group(1) if match else (_id_nyaa_do_nome(nome) if nome else None)
+    return _legenda_pt_br_na_pagina_nyaa(id_nyaa) if id_nyaa else None
 
 
 def _episodios_em_zips_yandex(soup):
@@ -1727,6 +1810,13 @@ def _opcoes_nao_tentadas(registro, numero_episodio, excluir=()):
     if not utilizaveis:
         extras = _opcoes_nyaa(registro, numero_episodio)
         opcoes, utilizaveis = opcoes + extras, _utilizaveis(extras)
+    elif all(_legenda_pt_br(o[0], o[1]) is False for o in utilizaveis):
+        # 🔥 2026-11-07 (Tougen Anki E06): tudo na página confirmado sem
+        # pt-BR; o nyaa costuma ter a Erai com pt-BR antes do site.
+        extras = _utilizaveis(_opcoes_nyaa(registro, numero_episodio))
+        if extras:
+            print(f" [SISTEMA] {registro['titulo']} Episódio {numero_episodio}: nenhuma opção da página tem legenda pt-BR, entrando {len(extras)} do nyaa.")
+        opcoes, utilizaveis = opcoes + extras, utilizaveis + extras
     return len(opcoes), utilizaveis
 
 
@@ -1756,7 +1846,8 @@ def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False
 
     total_opcoes, opcoes = _opcoes_nao_tentadas(registro, numero_episodio)
     rotulo_ep = _rotulo_episodio(registro, numero_episodio)
-    magnet = _escolher_melhor_magnet(opcoes, None if _eh_especial(numero_episodio) else numero_episodio)
+    magnet = _escolher_melhor_magnet(opcoes, None if _eh_especial(numero_episodio) else numero_episodio,
+                                     avaliar_pt_br=_legenda_pt_br)
     escolhida = next((o for o in opcoes if o[1] == magnet), None)
     if rebaixar_sem_censura and not (escolhida and _opcao_sem_censura(escolhida[0], magnet)):
         print(f" [SISTEMA] {registro['titulo']} Episódio {rotulo_ep}: sem opção sem censura, não vou baixar de novo.")
@@ -3606,6 +3697,155 @@ def converter_mp4_para_mkv(dry_run=False):
                 if not dry_run:
                     _remuxar_para_mkv(caminho_mp4)
     return resultados
+
+
+# ======================================================
+# 🇧🇷 LEGENDA pt-BR COMO FAIXA PADRÃO DO .mkv
+# ======================================================
+# 🔥 2026-11-07, pedido do usuário ("qnd inicio o episodio, eu tenho q trocar
+# a legenda dele p pt-br"): release da Crunchyroll traz 10+ legendas com o
+# inglês marcado como padrão. Depois do download, a faixa pt-BR vira a
+# padrão (remux `-c copy`, sem recodificar, fontes anexadas mantidas) e as
+# outras perdem a marca. Arquivo ainda num torrent do qBittorrent fica de
+# fora (mexer nele quebraria a semeadura); arquivo aberto no player falha no
+# os.replace e fica para a próxima volta.
+_IDIOMAS_PT = {"por", "pob", "pt", "pt-br", "ptbr"}
+_PADRAO_PT_PORTUGAL = re.compile(r"portugal|european|europeu|\bpt-pt\b", re.IGNORECASE)
+_PADRAO_FAIXA_SINAIS = re.compile(r"sign|song|forced|letreiro|placa", re.IGNORECASE)
+_legendas_conferidas = {}  # caminho -> (tamanho, mtime) já resolvido
+
+
+def _faixas_legenda(caminho):
+    """[{lang, title, default}] das legendas, na ordem de `s:N` do ffmpeg, ou
+    None quando o áudio padrão já é português (dublado, caso real Lanternas:
+    áudio PT-BR + legenda "forced" padrão - legenda completa por cima atrapalharia)."""
+    resultado = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type:stream_tags=language,title:stream_disposition=default",
+         "-of", "json", caminho],
+        capture_output=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if resultado.returncode != 0:
+        raise RuntimeError(resultado.stderr.decode(errors="ignore")[-300:])
+    faixas, audios = [], []
+    for stream in json.loads(resultado.stdout or b"{}").get("streams", []):
+        tags = {k.lower(): v for k, v in stream.get("tags", {}).items()}
+        faixa = {"lang": tags.get("language", "").lower(), "title": tags.get("title", ""),
+                 "default": bool(stream.get("disposition", {}).get("default"))}
+        if stream.get("codec_type") == "subtitle":
+            faixas.append(faixa)
+        elif stream.get("codec_type") == "audio":
+            audios.append(faixa)
+    audio_padrao = next((a for a in audios if a["default"]), audios[0] if audios else None)
+    if audio_padrao and audio_padrao["lang"] in _IDIOMAS_PT:
+        return None
+    return faixas
+
+
+def _posicao_legenda_pt_br(faixas):
+    """Posição (s:N) da melhor faixa pt-BR: idioma português, nunca a de
+    Portugal; a completa ganha da de letreiros. None se não houver."""
+    candidatas = [i for i, f in enumerate(faixas)
+                  if f["lang"] in _IDIOMAS_PT and not _PADRAO_PT_PORTUGAL.search(f["title"])]
+    candidatas.sort(key=lambda i: bool(_PADRAO_FAIXA_SINAIS.search(faixas[i]["title"])))
+    return candidatas[0] if candidatas else None
+
+
+def _marcar_legenda_padrao(caminho, posicao):
+    """Remuxa com só a faixa `s:posicao` marcada como padrão. Escreve num .tmp
+    ao lado e troca no fim: o original nunca fica pela metade."""
+    temporario = caminho + ".legenda.tmp"
+    resultado = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", caminho, "-map", "0", "-c", "copy",
+         "-disposition:s", "0", f"-disposition:s:{posicao}", "default", "-f", "matroska", temporario],
+        capture_output=True, timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        if resultado.returncode != 0 or not os.path.exists(temporario):
+            raise RuntimeError(resultado.stderr.decode(errors="ignore")[-300:])
+        os.replace(temporario, caminho)
+    finally:
+        if os.path.exists(temporario):
+            os.remove(temporario)
+
+
+def _arquivos_em_torrents_ativos():
+    """Caminhos (normcase) de tudo que ainda está no qBittorrent. Com a Web
+    UI fora do ar não há torrent semeando; não abre o qBittorrent só pra isso."""
+    if not qbittorrent_configurado():
+        return set()
+    host = os.getenv("QBITTORRENT_HOST", "localhost")
+    porta = int(os.getenv("QBITTORRENT_PORT", "8080") or "8080")
+    if not _web_ui_qbittorrent_respondendo(host, porta):
+        return set()
+    cliente = _cliente_qbittorrent()
+    caminhos = set()
+    for torrent in cliente.torrents_info():
+        for arquivo in cliente.torrents_files(torrent_hash=torrent.hash):
+            caminhos.add(os.path.normcase(os.path.abspath(os.path.join(torrent.save_path, arquivo.name))))
+    return caminhos
+
+
+def padronizar_legendas_pt_br(dry_run=False):
+    """Marca a legenda pt-BR como padrão em todo .mkv no padrão de nome da
+    GAIA: raiz da pasta de downloads (só a raiz - `Series/` e filmes são do
+    midia_tracker) e pasta de assistidos inteira. Devolve [(caminho, faixa)]
+    dos que mudou (ou mudaria, com `dry_run`)."""
+    arquivos = []
+    pasta_downloads, pasta_assistidos = obter_anime_pasta_downloads(), obter_anime_pasta_assistidos()
+    if pasta_downloads and os.path.isdir(pasta_downloads):
+        arquivos += [os.path.join(pasta_downloads, n) for n in os.listdir(pasta_downloads)]
+    if pasta_assistidos and os.path.isdir(pasta_assistidos):
+        for raiz, _, nomes in os.walk(pasta_assistidos):
+            arquivos += [os.path.join(raiz, n) for n in nomes]
+    arquivos = [a for a in arquivos if a.lower().endswith(".mkv")
+                and _PADRAO_NOME_ARQUIVO.match(os.path.basename(a)) and os.path.isfile(a)]
+    pendentes = []
+    for caminho in dict.fromkeys(os.path.normcase(os.path.abspath(a)) for a in arquivos):
+        try:
+            estado = (os.path.getsize(caminho), os.path.getmtime(caminho))
+        except OSError:
+            continue
+        if _legendas_conferidas.get(caminho) != estado:
+            pendentes.append((caminho, estado))
+    if not pendentes:
+        return []
+    try:
+        em_torrent = _arquivos_em_torrents_ativos()
+    except Exception as e:
+        print(f" [SISTEMA] Legenda pt-BR: não consegui ler os torrents do qBittorrent, fica para depois ({e}).")
+        return []
+
+    mudados = []
+    for caminho, estado in pendentes:
+        if caminho in em_torrent:
+            continue  # ainda semeando - volta quando sair do qBittorrent
+        try:
+            faixas = _faixas_legenda(caminho)
+        except FileNotFoundError:
+            print(" [SISTEMA] Legenda pt-BR: ffprobe/ffmpeg não encontrado no PATH.")
+            return mudados
+        except Exception as e:
+            # Arquivo ilegível (caso real: .mkv com cabeçalho zerado) não volta
+            # a cada 30s; só se mudar de tamanho/data.
+            print(f" [SISTEMA] Legenda pt-BR: não consegui ler as faixas de {caminho}: {str(e).strip()[-150:]}")
+            _legendas_conferidas[caminho] = estado
+            continue
+        posicao = _posicao_legenda_pt_br(faixas) if faixas is not None else None
+        ja_certo = posicao is None or (faixas[posicao]["default"] and
+                                       sum(f["default"] for f in faixas) == 1)
+        if ja_certo:
+            _legendas_conferidas[caminho] = estado
+            continue
+        mudados.append((caminho, faixas[posicao]["title"] or faixas[posicao]["lang"]))
+        if dry_run:
+            continue
+        try:
+            _marcar_legenda_padrao(caminho, posicao)
+            _legendas_conferidas[caminho] = (os.path.getsize(caminho), os.path.getmtime(caminho))
+            print(f" [SISTEMA] Legenda pt-BR marcada como padrão: {os.path.basename(caminho)}")
+        except Exception as e:
+            mudados.pop()
+            print(f" [SISTEMA] Legenda pt-BR: não consegui marcar em {os.path.basename(caminho)} (em uso?), tento de novo depois: {e}")
+    return mudados
 
 
 # ======================================================

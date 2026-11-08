@@ -142,7 +142,9 @@ def _loop_downloads():
     até 5min pela próxima volta da manutenção. Sem download em andamento,
     verificar_downloads_em_andamento sai logo depois de ler o JSON local, sem
     falar com o qBittorrent. Depois, episódio de anime finalizado vai para a
-    pasta dele na pasta de assistidos (organizar_animes_finalizados)."""
+    pasta dele na pasta de assistidos (organizar_animes_finalizados). Por
+    fim, a legenda pt-BR vira a faixa padrão dos .mkv (2026-11-07,
+    padronizar_legendas_pt_br)."""
     while True:
         try:
             if config.obter_anime_tracker_ativo():
@@ -151,6 +153,12 @@ def _loop_downloads():
                     anime_tracker.organizar_animes_finalizados()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro no loop de downloads: {e}")
+        try:
+            if config.obter_anime_tracker_ativo():
+                # Fora do lock: não toca no JSON, e o remux leva alguns segundos.
+                anime_tracker.padronizar_legendas_pt_br()
+        except Exception as e:
+            print(f" [SISTEMA] MOIRAI: erro ao padronizar legendas pt-BR: {e}")
         try:
             if config.obter_midia_tracker_ativo():
                 midia_tracker.verificar_downloads()  # 🔥 2026-10-17 - lock próprio, ver midia_tracker

@@ -17,16 +17,21 @@ RESULTADOS = [
     ("[Yameii] Megami no Cafe Terrace S2 - 10 [English Dub] [POR-BR]", "https://nyaa.si/download/5.torrent", 4),  # dublado
     ("[Erai-raws] Megami no Cafe Terrace 2nd Season - 10 [720p][Multiple Subtitle]", "https://nyaa.si/download/6.torrent", 0),  # sem seeder
     ("[Erai-raws] Megami no Cafe Terrace 2nd Season - 10 END [480p][Multiple Subtitle]", "https://nyaa.si/download/7.torrent", 1),
+    # Erai atual ("[MultiSub]"): pt-BR só confirmado pela descrição do release.
+    ("[Erai-raws] Megami no Cafe Terrace 2nd Season - 10 [1080p CR WEB-DL AVC AAC][MultiSub][5C6C4B4F]", "https://nyaa.si/download/8.torrent", 2),
 ]
 
 
 def testar_filtros_da_busca_no_nyaa():
     consultas = []
     at._buscar_nyaa = lambda consulta: consultas.append(consulta) or RESULTADOS
+    # Descrição: SubsPlease lista legendas sem português, Erai atual tem pt-BR.
+    at._legenda_pt_br_na_pagina_nyaa = lambda id_nyaa: {"4": False, "8": True}.get(id_nyaa)
     registro = {"titulo": "Megami no Café Terrace 2ª Temporada", "url": "x"}
     links = [o[1] for o in at._opcoes_nyaa(registro, 10)]
     assert consultas == ["megami no cafe terrace 10"], consultas
-    assert links == ["https://nyaa.si/download/1.torrent", "https://nyaa.si/download/7.torrent"], links
+    assert links == ["https://nyaa.si/download/1.torrent", "https://nyaa.si/download/7.torrent",
+                     "https://nyaa.si/download/8.torrent"], links
     assert at._opcoes_nyaa(registro, "especial-1") == []
 
 
