@@ -7,6 +7,16 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-07
+
+### Adicionado
+
+- **Legenda pt-BR como faixa padrão (2026-11-07, pedido do usuário: "qnd inicio o episodio, eu tenho q trocar a legenda dele p pt-br")**: os releases da Crunchyroll trazem 10+ legendas com a inglesa marcada como padrão. O loop de downloads agora marca a faixa pt-BR como a única padrão em cada `.mkv` de anime (raiz da pasta de downloads e pasta de assistidos), por remux sem recodificar. Ficam de fora: arquivo ainda semeando no qBittorrent, áudio padrão em português (dublado) e arquivo sem faixa pt-BR. Coberto por `testes/testar_legenda_padrao_pt_br.py`.
+
+### Alterado
+
+- **Escolha do release prefere legenda pt-BR (2026-11-07, caso real Tougen Anki: Nikko Kegon no Taki-hen E06)**: o episódio saiu do rip da VARYG, sem português, porque a escolha olhava só sem censura e qualidade. Agora cada opção é avaliada pelo nome (POR-BR/PT-BR) ou pela descrição do release no nyaa, e pt-BR confirmado ganha da qualidade (o sem censura continua acima de tudo). Quando nada da página tem pt-BR, o nyaa entra como opção extra, e o "[MultiSub]" atual da Erai passa a ser aceito quando a descrição confirma pt-BR. Coberto por `testes/testar_legenda_pt_br.py`.
+
 ## [0.4.3] - 2026-11-03
 
 ### Corrigido

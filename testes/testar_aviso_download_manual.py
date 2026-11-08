@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from moirai.core import anime_tracker as at
 
+at._legenda_pt_br = lambda rotulo, link: None  # sem rede (ver testar_legenda_pt_br.py)
+
 at._buscar_nyaa = lambda consulta: []  # sem rede: reserva do nyaa desligada nos testes
 
 URL = "https://darkmahou.io/anime-2a-temporada/"

@@ -903,6 +903,42 @@ O DarkMahou trocou o `href` de cada opção (`div.dm-hosts > a`) de
 
 Ver `testes/testar_link_encurtador.py`.
 
+## Legenda pt-BR: escolha do release e faixa padrão (2026-11-07)
+
+Caso real: Tougen Anki: Nikko Kegon no Taki-hen E06 saiu do rip da VARYG
+("Multi-Subs", 12 legendas da Crunchyroll, nenhuma em português), única opção
+da página na hora. Mesmo com pt-BR no arquivo, o player abria em inglês,
+porque a faixa padrão dos releases da Crunchyroll é a inglesa.
+
+- **Escolha do release.** `_legenda_pt_br(rotulo, link)` devolve True, False
+  ou None. POR-BR/PT-BR no rótulo ou no nome resolve na hora. Senão, procura
+  o release no nyaa pelo nome exato (`_id_nyaa_do_nome`; nome longo cai para
+  as 6 primeiras palavras) e lê a descrição (`_legenda_pt_br_na_pagina_nyaa`,
+  cache pelo processo): "Portugu"/POR-BR = True; lista de legendas sem
+  português ("Subtitles Info", "Subtitles (12)") = False; sem lista (Judas) ou
+  fora do nyaa (fansub brasileiro) = None. `_escolher_melhor_magnet` recebe
+  `avaliar_pt_br` e põe o critério logo depois do sem censura: confirmado >
+  desconhecido > confirmado sem, e só então a qualidade. Sem a função (testes
+  antigos), o critério empata.
+- **Nyaa quando nada da página tem pt-BR.** `_opcoes_nao_tentadas` também
+  consulta `_opcoes_nyaa` quando todas as opções da página são confirmadas
+  sem pt-BR. `_opcoes_nyaa` aceita o "[MultiSub]" da Erai atual se a descrição
+  confirmar pt-BR (antes, só o nome antigo "Multiple Subtitle"/POR-BR).
+- **Faixa padrão.** `padronizar_legendas_pt_br` roda no `_loop_downloads`,
+  fora do lock. Passa pelos `.mkv` no padrão de nome da GAIA na raiz da pasta
+  de downloads (só a raiz: `Series/` é do midia_tracker) e na pasta de
+  assistidos inteira. O ffprobe lê as faixas, e a melhor pt-BR (nunca a de
+  Portugal; a completa ganha da de letreiros/forced) vira a única padrão via
+  remux `ffmpeg -map 0 -c copy -disposition:s 0 -disposition:s:N default`,
+  num `.legenda.tmp` trocado por `os.replace`. Ficam de fora: o arquivo de
+  torrent ainda no qBittorrent (lê a lista só se a Web UI responder; não abre
+  o qBittorrent), áudio padrão em português (dublado, caso real Lanternas),
+  legenda embutida no vídeo/sem faixa pt. Arquivo aberto no player falha no
+  `os.replace` e volta na próxima rodada. O resultado (incluindo arquivo
+  ilegível) fica em cache por caminho + tamanho + data.
+
+Ver `testes/testar_legenda_pt_br.py` e `testes/testar_legenda_padrao_pt_br.py`.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
