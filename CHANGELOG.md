@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
+### Adicionado
+
+- **Só o último episódio de cada anime na pasta de assistidos (2026-11-08, pedido do usuário: "a pasta E:\\Downloads\\Anime ta ficando meio poluida, quero q fique apenas o ultimo ep de cd anime")**: a cada volta da manutenção (5 min), `limpar_assistidos_antigos` manda para a Lixeira do Windows os episódios anteriores ao último de cada anime na raiz da pasta de assistidos. Só apaga episódio que o registro já tem como "assistido", e só na raiz: pastas de temporada, `_Pausados` e outras subpastas ficam como estão, assim como arquivos sem anime no registro. Na primeira rodada saíram 42 episódios de 16 animes. Coberto por `testes/testar_limpar_assistidos_antigos.py`.
+
 ## [0.5.1] - 2026-11-08
 
 ### Corrigido

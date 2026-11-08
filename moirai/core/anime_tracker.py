@@ -4061,6 +4061,71 @@ def _apagar_episodios_assistidos_apos_conclusao(registro):
     return removidos
 
 
+def _mandar_para_lixeira(caminho):
+    """Lixeira do Windows (recuperável), via SHFileOperationW, sem diálogo."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+    # FO_DELETE = 3; FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI
+    operacao = _SHFILEOPSTRUCTW(None, 3, os.path.abspath(caminho) + "\0", None, 0x4 | 0x10 | 0x40 | 0x400, False, None, None)
+    codigo = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operacao))
+    if codigo or operacao.fAnyOperationsAborted or os.path.exists(caminho):
+        raise OSError(f"SHFileOperationW devolveu {codigo}")
+
+
+def limpar_assistidos_antigos(dry_run=False):
+    """Deixa na raiz da pasta de assistidos só o último episódio de cada
+    anime; os anteriores vão para a Lixeira.
+
+    🔥 2026-11-08, pedido do usuário: "a pasta E:\\Downloads\\Anime ta
+    ficando meio poluida, quero q fique apenas o ultimo ep de cd anime".
+    Segunda exceção consciente à regra "nunca apagar arquivo" (a primeira é
+    `_apagar_episodios_assistidos_apos_conclusao`), por isso vai para a
+    Lixeira em vez de `os.remove`. Só a raiz: as subpastas (pastas de
+    temporada de `organizar_animes_finalizados`, `_Pausados` e o que o
+    usuário criar) ficam como estão. Só apaga episódio que o registro já tem
+    como "assistido" (a varredura de `sincronizar_biblioteca_local` roda
+    antes no mesmo loop), então o status não se perde. Chamar sob
+    `lock_estado_animes`. Devolve os caminhos apagados (ou que seriam)."""
+    pasta = obter_anime_pasta_assistidos()
+    if not pasta or not os.path.isdir(pasta):
+        return []
+    animes = _carregar_animes()
+    por_titulo = {_sanitizar_nome_arquivo(r["titulo"]): r for r in animes.values()}
+    episodios = {}
+    for nome in os.listdir(pasta):
+        caminho = os.path.join(pasta, nome)
+        match = _PADRAO_NOME_ARQUIVO.match(nome)
+        if not match or not nome.lower().endswith(EXTENSOES_VIDEO) or not os.path.isfile(caminho):
+            continue
+        episodios.setdefault(match.group(1), []).append((int(match.group(2)), caminho))
+    apagados = []
+    for titulo, lista in episodios.items():
+        registro = por_titulo.get(titulo)
+        if not registro:
+            continue
+        ultimo = max(n for n, _ in lista)
+        status = registro.get("episodios", {})
+        for numero, caminho in sorted(lista):
+            if numero == ultimo or status.get(str(numero)) != "assistido":
+                continue
+            if not dry_run:
+                try:
+                    _mandar_para_lixeira(caminho)
+                except OSError as e:
+                    print(f" [SISTEMA] Não consegui mandar '{os.path.basename(caminho)}' para a Lixeira (em uso?): {e}")
+                    continue
+            apagados.append(caminho)
+    if apagados and not dry_run:
+        print(f" [SISTEMA] 🧹 Pasta de assistidos: {len(apagados)} episódio(s) antigo(s) para a Lixeira; fica só o último de cada anime.")
+    return apagados
+
+
 def _atualizar_total_episodios_mal(registro):
     """Busca de novo no MAL o total de episódios de quem ainda não tem.
 
