@@ -969,6 +969,19 @@ episódio da raiz e manda os anteriores para a Lixeira (`SHFileOperationW` com
 - arquivo sem anime correspondente no registro não é tocado;
 - falha (arquivo aberto no player) só registra no log e tenta na próxima volta.
 
+## Conversão automática de .mp4 para .mkv (2026-11-09)
+
+`converter_mp4_para_mkv` existe desde 2026-08-08, mas só era chamada por
+`renomear_biblioteca_completa`. `converter_mp4_baixados` a coloca no
+`_loop_downloads`, fora do lock (não toca no JSON; o status do episódio não
+depende da extensão) e antes de `padronizar_legendas_pt_br`, para o `.mkv`
+novo ter a legenda ajustada na mesma volta. Primeiro faz um `dry_run` barato
+(só varre o disco); só com algum `.mp4` pendente consulta o qBittorrent e
+ignora o que ainda está semeando, porque apagar o `.mp4` quebraria a
+semeadura. Ajustes no `_remuxar_para_mkv`: `-map 0` (sem ele o ffmpeg leva só
+um áudio e uma legenda), `CREATE_NO_WINDOW` e remoção do `.mkv` parcial em
+caso de falha (senão o `.mkv` existente bloquearia as próximas tentativas).
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/

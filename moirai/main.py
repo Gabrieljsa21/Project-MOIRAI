@@ -143,7 +143,8 @@ def _loop_downloads():
     verificar_downloads_em_andamento sai logo depois de ler o JSON local, sem
     falar com o qBittorrent. Depois, episódio de anime finalizado vai para a
     pasta dele na pasta de assistidos (organizar_animes_finalizados). Por
-    fim, a legenda pt-BR vira a faixa padrão dos .mkv (2026-11-07,
+    fim, .mp4 baixado vira .mkv (2026-11-09, converter_mp4_baixados) e a
+    legenda pt-BR vira a faixa padrão dos .mkv (2026-11-07,
     padronizar_legendas_pt_br)."""
     while True:
         try:
@@ -156,6 +157,7 @@ def _loop_downloads():
         try:
             if config.obter_anime_tracker_ativo():
                 # Fora do lock: não toca no JSON, e o remux leva alguns segundos.
+                anime_tracker.converter_mp4_baixados()  # 🔥 2026-11-09 - .mp4 vira .mkv
                 anime_tracker.padronizar_legendas_pt_br()
         except Exception as e:
             print(f" [SISTEMA] MOIRAI: erro ao padronizar legendas pt-BR: {e}")

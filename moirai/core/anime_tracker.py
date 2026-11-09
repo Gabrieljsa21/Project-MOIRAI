@@ -3648,14 +3648,16 @@ def _remuxar_para_mkv(caminho_mp4):
         return None
     try:
         resultado = subprocess.run(
-            ["ffmpeg", "-y", "-i", caminho_mp4, "-c", "copy", caminho_mkv],
-            capture_output=True, timeout=300,
+            ["ffmpeg", "-y", "-v", "error", "-i", caminho_mp4, "-map", "0", "-c", "copy", caminho_mkv],
+            capture_output=True, timeout=300, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         print(f" [SISTEMA] Não consegui converter {caminho_mp4} pra mkv (ffmpeg indisponível ou demorou demais): {e}")
         return None
     if resultado.returncode != 0 or not os.path.exists(caminho_mkv):
         print(f" [SISTEMA] ffmpeg falhou ao converter {caminho_mp4}: {resultado.stderr.decode(errors='ignore')[-500:]}")
+        if os.path.exists(caminho_mkv):
+            os.remove(caminho_mkv)  # .mkv pela metade bloquearia a próxima tentativa
         return None
     try:
         os.remove(caminho_mp4)
@@ -3664,7 +3666,7 @@ def _remuxar_para_mkv(caminho_mp4):
     return caminho_mkv
 
 
-def converter_mp4_para_mkv(dry_run=False):
+def converter_mp4_para_mkv(dry_run=False, ignorar=()):
     """Remuxa todo vídeo .mp4 já no padrão de nome da Gaia
     (`_PADRAO_NOME_ARQUIVO` - ou seja, já renomeado por
     renomear_biblioteca_completa/verificar_downloads_em_andamento) pra .mkv -
@@ -3672,8 +3674,9 @@ def converter_mp4_para_mkv(dry_run=False):
     de propósito - as pastas do usuário têm filme/série/vídeo pessoal em
     .mp4 misturado com anime (confirmado varrendo a pasta real), e essa
     função NUNCA deve tocar nisso. `dry_run=True` só REPORTA sem converter
-    nada. Devolve [(caminho_mp4, caminho_mkv), ...] dos convertidos (ou que
-    seriam)."""
+    nada. `ignorar`: caminhos (normcase) que não podem ser mexidos, como os
+    ainda semeando no qBittorrent. Devolve [(caminho_mp4, caminho_mkv), ...]
+    dos convertidos (ou que seriam)."""
     resultados = []
     caminhos_vistos = set()
     for pasta in (obter_anime_pasta_downloads(), obter_anime_pasta_assistidos()):
@@ -3687,16 +3690,38 @@ def converter_mp4_para_mkv(dry_run=False):
                     continue  # 🔥 só mexe no que já está no padrão da Gaia
                 caminho_mp4 = os.path.join(raiz, nome)
                 caminho_normalizado = os.path.normcase(os.path.abspath(caminho_mp4))
-                if caminho_normalizado in caminhos_vistos:
+                if caminho_normalizado in caminhos_vistos or caminho_normalizado in ignorar:
                     continue
                 caminhos_vistos.add(caminho_normalizado)
                 caminho_mkv = os.path.splitext(caminho_mp4)[0] + ".mkv"
                 if os.path.exists(caminho_mkv):
                     continue
-                resultados.append((caminho_mp4, caminho_mkv))
-                if not dry_run:
-                    _remuxar_para_mkv(caminho_mp4)
+                if dry_run:
+                    resultados.append((caminho_mp4, caminho_mkv))
+                elif _remuxar_para_mkv(caminho_mp4):
+                    resultados.append((caminho_mp4, caminho_mkv))
+                    print(f" [SISTEMA] 🎬 Convertido para .mkv: {os.path.basename(caminho_mkv)}")
     return resultados
+
+
+def converter_mp4_baixados():
+    """Converte para .mkv os episódios .mp4 que já terminaram de baixar.
+
+    🔥 2026-11-09, pedido do usuário: "tem ep q ta em mp4 poe p converter p
+    mkv qnd terminar de baixar". Roda no loop de downloads, antes de
+    `padronizar_legendas_pt_br` (o .mkv novo já entra na mesma volta). Só
+    consulta o qBittorrent quando há algum .mp4 pendente; arquivo ainda
+    semeando fica para quando sair do qBittorrent (apagar o .mp4 quebraria a
+    semeadura). Se o .mp4 estiver aberto no player, o .mkv é criado e o .mp4
+    fica; a varredura não tenta de novo porque o .mkv já existe."""
+    if not converter_mp4_para_mkv(dry_run=True):
+        return []
+    try:
+        em_torrent = _arquivos_em_torrents_ativos()
+    except Exception as e:
+        print(f" [SISTEMA] Conversão para .mkv: não consegui ler os torrents do qBittorrent, fica para depois ({e}).")
+        return []
+    return converter_mp4_para_mkv(ignorar=em_torrent)
 
 
 # ======================================================
