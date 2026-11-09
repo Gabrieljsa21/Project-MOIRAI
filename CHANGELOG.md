@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-09
+
+### Adicionado
+
+- **Episódio .mp4 vira .mkv sozinho ao terminar de baixar (2026-11-09, pedido do usuário: "tem ep q ta em mp4 poe p converter p mkv qnd terminar de baixar")**: a conversão (`converter_mp4_para_mkv`, remux `-c copy`, sem recodificar) só rodava na renomeação manual da biblioteca. Agora `converter_mp4_baixados` roda no loop de downloads (30 s), antes da padronização da legenda pt-BR. Só mexe em arquivo no padrão de nome da GAIA, e o que ainda está semeando no qBittorrent espera sair de lá. O remux passou a levar todas as faixas (`-map 0`), roda sem abrir janela de console e apaga o `.mkv` pela metade quando o ffmpeg falha. Coberto por `testes/testar_converter_mp4_baixados.py`.
+
 ## [0.6.0] - 2026-11-08
 
 ### Adicionado
