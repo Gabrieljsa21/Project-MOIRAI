@@ -175,7 +175,9 @@ def _loop_manutencao():
     extração) - sincronia de biblioteca local e progresso do MyAnimeList, a
     cada 5min. + checagem autônoma de lançamentos quando a GAIA está fechada
     (2026-09-24). + só o último episódio de cada anime na raiz da pasta de
-    assistidos (2026-11-08, limpar_assistidos_antigos). Downloads em andamento saíram daqui pro _loop_downloads."""
+    assistidos (2026-11-08, limpar_assistidos_antigos). + episódio corrompido baixado
+    de novo e episódio sem pt-BR trocado (2026-11-09,
+    tratar_episodios_com_problema). Downloads em andamento saíram daqui pro _loop_downloads."""
     while True:
         try:
             if config.obter_anime_tracker_ativo():
@@ -183,6 +185,7 @@ def _loop_manutencao():
                     anime_tracker.sincronizar_biblioteca_local()
                     anime_tracker.sincronizar_progresso_mal()
                     anime_tracker.limpar_assistidos_antigos()  # 🔥 2026-11-08 - só o último episódio
+                    anime_tracker.tratar_episodios_com_problema()  # 🔥 2026-11-09 - corrompido / sem pt-BR
                 anime_tracker.backfill_trailers()  # 🔥 2026-10-03 - fora do lock, ver docstring
                 _checagem_autonoma_se_preciso()
         except Exception as e:

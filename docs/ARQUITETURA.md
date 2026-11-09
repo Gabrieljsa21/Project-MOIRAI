@@ -982,6 +982,39 @@ semeadura. Ajustes no `_remuxar_para_mkv`: `-map 0` (sem ele o ffmpeg leva só
 um áudio e uma legenda), `CREATE_NO_WINDOW` e remoção do `.mkv` parcial em
 caso de falha (senão o `.mkv` existente bloquearia as próximas tentativas).
 
+## Episódio com problema: corrompido ou sem pt-BR (2026-11-09)
+
+`padronizar_legendas_pt_br` já lê as faixas de cada `.mkv`; agora anota dois
+achados em memória (`_episodios_corrompidos`, `_episodios_sem_pt_br`) e
+`tratar_episodios_com_problema` os resolve no `_loop_manutencao`, sob
+`lock_estado_animes`, no máximo 2 episódios por volta (cada um consulta a
+página do anime e o nyaa).
+
+- **Corrompido** (ffprobe com "Invalid data found", "EBML header" ou "moov
+  atom not found") e status "baixado": o arquivo vai para a Lixeira, o
+  episódio sai de `episodios` e de `episodios_na_pasta_do_anime` ANTES da
+  próxima varredura (senão o sumiço na pasta do anime finalizado viraria
+  "assistido") e `baixar_episodio` roda normal. `episodios_rebaixado_corrompido`
+  limita a uma vez por episódio; na segunda, `_registrar_falha_download`.
+- **Sem pt-BR**: há legenda com idioma declarado e nenhuma em português.
+  Sem legenda nenhuma ou só faixa sem idioma é fansub (legenda na imagem ou
+  única) e não entra. `baixar_episodio(..., substituir=caminho)` ignora o
+  status "baixado", mas só aceita opção com `_legenda_pt_br(...) is True` e
+  hash diferente do último disparado; sem opção, não registra falha.
+  `episodios_troca_pt_br_em` limita a procura a 1x por dia por episódio. O
+  download leva `substituir` em `downloads_em_andamento` e
+  `verificar_downloads_em_andamento` manda o arquivo antigo para a Lixeira só
+  na hora de renomear o novo.
+
+Decisões descartadas a pedido do usuário: trava por quantidade de episódios
+que somem juntos (ele assiste vários seguidos) e confirmação antes de
+concluir no MAL (a ideia é automatizar).
+
+Junto: `_salvar_animes` faz backup diário em `data/backups/` (7 dias) e grava
+de forma atômica; `_PADRAO_NOME_ARQUIVO` virou `re.IGNORECASE` e
+`_canonizar_titulo` devolve o título na grafia do registro (mapa por
+`casefold`, refeito quando o JSON muda).
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/

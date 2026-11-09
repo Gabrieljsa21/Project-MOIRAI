@@ -193,11 +193,40 @@ def _carregar_animes():
             return {}
 
 
+_DIAS_DE_BACKUP_ANIMES = 7
+
+
+def _backup_diario_animes():
+    """Copia o registro para `backups/` antes da 1ª gravação de cada dia e
+    guarda os últimos `_DIAS_DE_BACKUP_ANIMES`. 🔥 2026-11-09: no incidente de
+    2026-11-08 (episódios marcados assistidos por engano) não havia cópia e o
+    estado foi refeito pelo log. Falha aqui nunca impede a gravação."""
+    try:
+        if not os.path.exists(ARQUIVO_ANIMES):
+            return
+        pasta = os.path.join(os.path.dirname(ARQUIVO_ANIMES), "backups")
+        base = os.path.splitext(os.path.basename(ARQUIVO_ANIMES))[0]
+        destino = os.path.join(pasta, f"{base}.{datetime.now().strftime('%Y-%m-%d')}.json")
+        if os.path.exists(destino):
+            return
+        os.makedirs(pasta, exist_ok=True)
+        shutil.copy2(ARQUIVO_ANIMES, destino)
+        antigos = sorted(n for n in os.listdir(pasta) if n.startswith(base + ".") and n.endswith(".json"))
+        for nome in antigos[:-_DIAS_DE_BACKUP_ANIMES]:
+            os.remove(os.path.join(pasta, nome))
+    except OSError as e:
+        print(f" [SISTEMA] Não consegui fazer o backup diário do registro de animes: {e}")
+
+
 def _salvar_animes(animes):
     os.makedirs(os.path.dirname(ARQUIVO_ANIMES), exist_ok=True)
     with _lock_arquivo_animes:
-        with open(ARQUIVO_ANIMES, "w", encoding="utf-8") as f:
+        _backup_diario_animes()
+        # Grava num temporário e troca: queda no meio não deixa o JSON pela metade.
+        temporario = ARQUIVO_ANIMES + ".tmp"
+        with open(temporario, "w", encoding="utf-8") as f:
             json.dump(animes, f, indent=4, ensure_ascii=False)
+        os.replace(temporario, ARQUIVO_ANIMES)
 
 
 def obter_ultima_checagem_diaria():
@@ -1470,7 +1499,7 @@ def _episodios_em_zips_yandex(soup):
 # especial, antes do 1 ("S02E00.5 - Especial 1"), fora da contagem numerada.
 _PREFIXO_ESPECIAL = "especial-"
 _PADRAO_BLOCO_ESPECIAL = re.compile(rf"^{_PALAVRA_EPISODIO}\s+(?:Especial|0+)\b", re.IGNORECASE)
-_PADRAO_NOME_ESPECIAL = re.compile(r" - (?:S\d+)?E\d+\.5 - Especial \d+")
+_PADRAO_NOME_ESPECIAL = re.compile(r" - (?:S\d+)?E\d+\.5 - Especial \d+", re.IGNORECASE)
 
 
 def _eh_especial(ident):
@@ -1820,7 +1849,7 @@ def _opcoes_nao_tentadas(registro, numero_episodio, excluir=()):
     return len(opcoes), utilizaveis
 
 
-def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False):
+def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False, substituir=None):
     """Extrai o magnet do episódio (sem censura e 1080p HEVC de preferência) e manda pro
     qBittorrent - `save_path` é a pasta de downloads configurada no Painel
     (obter_anime_pasta_downloads, default "E:\\Downloads" - a mesma pasta onde o
@@ -1838,14 +1867,25 @@ def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False
     a melhor opção for sem censura. O arquivo novo sai com sufixo
     SUFIXO_SEM_CENSURA e o antigo fica intocado.
 
+    `substituir` (2026-11-09, trocar_episodios_sem_pt_br): caminho do arquivo
+    atual, sem legenda pt-BR. Baixa de novo um episódio "baixado", mas só de
+    um release com pt-BR confirmado e diferente do atual. O arquivo antigo só
+    vai para a Lixeira quando o novo termina (verificar_downloads_em_andamento).
+
     `numero_episodio` também aceita "especial-K" (ver _eh_especial)."""
-    if _status_episodio(registro, numero_episodio) in ("baixado", "assistido") and not rebaixar_sem_censura:
+    if _status_episodio(registro, numero_episodio) in ("baixado", "assistido") and not (rebaixar_sem_censura or substituir):
         return False
     if str(numero_episodio) in registro.get("downloads_em_andamento", {}):
         return False
 
     total_opcoes, opcoes = _opcoes_nao_tentadas(registro, numero_episodio)
     rotulo_ep = _rotulo_episodio(registro, numero_episodio)
+    if substituir:
+        atual = registro.get("episodios_download_disparado_em", {}).get(str(numero_episodio), "")
+        opcoes = [o for o in opcoes if _legenda_pt_br(o[0], o[1]) is True
+                  and (_hash_da_opcao(o[1]) or "?").lower() not in atual.lower()]
+        if not opcoes:
+            return False
     magnet = _escolher_melhor_magnet(opcoes, None if _eh_especial(numero_episodio) else numero_episodio,
                                      avaliar_pt_br=_legenda_pt_br)
     escolhida = next((o for o in opcoes if o[1] == magnet), None)
@@ -1918,6 +1958,8 @@ def baixar_episodio(chave, registro, numero_episodio, rebaixar_sem_censura=False
             info_download["lote"] = list(lote)
         if rebaixar_sem_censura:
             info_download["rebaixar_sem_censura"] = True
+        if substituir:
+            info_download["substituir"] = substituir
         animes[chave].setdefault("downloads_em_andamento", {})[str(numero_episodio)] = info_download
         animes[chave].setdefault("episodios_download_disparado_em", {})[str(numero_episodio)] = f"{agora} ({hash_torrent})"
         animes[chave].get("episodios_falha_download", {}).pop(str(numero_episodio), None)
@@ -2421,7 +2463,7 @@ def verificar_downloads_em_andamento():
     for chave, numero_episodio_str, info in pendentes:
         registro = animes[chave]
         status_atual = _status_episodio(registro, numero_episodio_str)
-        if status_atual in ("baixado", "assistido") and not info.get("rebaixar_sem_censura"):
+        if status_atual in ("baixado", "assistido") and not (info.get("rebaixar_sem_censura") or info.get("substituir")):
             # Um estado antigo pode sobreviver a uma conclusão anterior. Não o
             # deixe rebaixar um episódio assistido nem tocar em um torrent que
             # o usuário possa estar mantendo no qBittorrent por conta própria.
@@ -2513,6 +2555,15 @@ def verificar_downloads_em_andamento():
             pasta_final = torrents[0].save_path if (
                 info.get("lote") or _dentro_da_pasta(arquivo_video, torrents[0].save_path)) else os.path.dirname(arquivo_video)
             caminho_novo = os.path.join(pasta_final, nome_novo)
+            antigo = info.get("substituir")
+            if antigo and os.path.isfile(antigo) and os.path.normcase(os.path.abspath(antigo)) != os.path.normcase(os.path.abspath(arquivo_video)):
+                # Troca por release com pt-BR: o antigo só sai agora, com o novo pronto.
+                try:
+                    _mandar_para_lixeira(antigo)
+                    print(f" [SISTEMA] 🇧🇷 {registro['titulo']} Episódio {numero_episodio_str}: versão sem pt-BR foi para a Lixeira.")
+                except OSError as e:
+                    print(f" [SISTEMA] ⚠️ {registro['titulo']} Episódio {numero_episodio_str}: não consegui tirar a versão antiga (em uso?), tento de novo: {e}")
+                    continue
             try:
                 if not os.path.exists(caminho_novo):
                     if info.get("lote"):
@@ -2725,7 +2776,27 @@ def _tratar_downloads_travados(cliente, travados):
 # incluir temporada no nome renomeado) - continua reconhecendo arquivos já
 # renomeados ANTES dessa mudança (só "Título - E08.ext", sem temporada).
 # Sufixo " [Sem Censura]" opcional (2026-09-24, SUFIXO_SEM_CENSURA).
-_PADRAO_NOME_ARQUIVO = re.compile(r"^(.*) - (?:S\d+)?E(\d+)(?: \[Sem Censura\])?\.\w+$")
+# 🔥 2026-11-09: sem diferenciar maiúsculas. No incidente de 2026-11-08 os
+# arquivos ficaram em minúsculas, deixaram de ser reconhecidos e viraram
+# "apagado = assistido". O título lido volta à grafia do registro em
+# `_canonizar_titulo`.
+_PADRAO_NOME_ARQUIVO = re.compile(r"^(.*) - (?:S\d+)?E(\d+)(?: \[Sem Censura\])?\.\w+$", re.IGNORECASE)
+_titulos_canonicos = {"mtime": None, "mapa": {}}
+
+
+def _canonizar_titulo(titulo):
+    """Título sanitizado na grafia do registro, comparando sem maiúsculas.
+    Título fora do registro volta como veio."""
+    try:
+        mtime = os.path.getmtime(ARQUIVO_ANIMES)
+    except OSError:
+        mtime = None
+    if mtime is None or mtime != _titulos_canonicos["mtime"]:
+        _titulos_canonicos["mapa"] = {
+            _sanitizar_nome_arquivo(r["titulo"]).casefold(): _sanitizar_nome_arquivo(r["titulo"])
+            for r in _carregar_animes().values() if isinstance(r, dict) and r.get("titulo")}
+        _titulos_canonicos["mtime"] = mtime
+    return _titulos_canonicos["mapa"].get(titulo.casefold(), titulo)
 
 
 def _mapear_arquivos_por_titulo(pasta, ignorar=()):
@@ -2748,7 +2819,7 @@ def _mapear_arquivos_por_titulo(pasta, ignorar=()):
             match = _PADRAO_NOME_ARQUIVO.match(nome)
             if not match:
                 continue
-            titulo_sanitizado, numero_episodio = match.group(1), int(match.group(2))
+            titulo_sanitizado, numero_episodio = _canonizar_titulo(match.group(1)), int(match.group(2))
             resultado.setdefault(titulo_sanitizado, set()).add(numero_episodio)
     return resultado
 
@@ -2786,9 +2857,9 @@ def _titulo_do_nome_arquivo(nome):
     """Título sanitizado de um episódio renomeado pelo MOIRAI (normal ou especial), ou None."""
     match = _PADRAO_NOME_ARQUIVO.match(nome)
     if match:
-        return match.group(1)
+        return _canonizar_titulo(match.group(1))
     match = _PADRAO_NOME_ESPECIAL.search(nome)
-    return nome[:match.start()] if match else None
+    return _canonizar_titulo(nome[:match.start()]) if match else None
 
 
 def anime_ja_iniciado(registro):
@@ -3738,6 +3809,10 @@ _IDIOMAS_PT = {"por", "pob", "pt", "pt-br", "ptbr"}
 _PADRAO_PT_PORTUGAL = re.compile(r"portugal|european|europeu|\bpt-pt\b", re.IGNORECASE)
 _PADRAO_FAIXA_SINAIS = re.compile(r"sign|song|forced|letreiro|placa", re.IGNORECASE)
 _legendas_conferidas = {}  # caminho -> (tamanho, mtime) já resolvido
+# Achados da varredura, tratados por tratar_episodios_com_problema (normcase -> caminho real).
+_episodios_corrompidos = {}
+_episodios_sem_pt_br = {}
+_PADRAO_ARQUIVO_CORROMPIDO = re.compile(r"Invalid data found|EBML header|moov atom not found", re.IGNORECASE)
 
 
 def _faixas_legenda(caminho):
@@ -3859,8 +3934,15 @@ def padronizar_legendas_pt_br(dry_run=False):
             # a cada 30s; só se mudar de tamanho/data.
             print(f" [SISTEMA] Legenda pt-BR: não consegui ler as faixas de {real}: {str(e).strip()[-150:]}")
             _legendas_conferidas[caminho] = estado
+            if _PADRAO_ARQUIVO_CORROMPIDO.search(str(e)):
+                _episodios_corrompidos[caminho] = real
             continue
         posicao = _posicao_legenda_pt_br(faixas) if faixas is not None else None
+        # Sem português, mas com legenda em outro idioma (rip multi-legendas
+        # como o da VARYG). Sem legenda nenhuma ou faixa sem idioma = fansub
+        # com a legenda na imagem ou única: fica como está.
+        if faixas and posicao is None and any(f["lang"] not in ("", "und") for f in faixas):
+            _episodios_sem_pt_br[caminho] = real
         ja_certo = posicao is None or (faixas[posicao]["default"] and
                                        sum(f["default"] for f in faixas) == 1)
         if ja_certo:
@@ -3877,6 +3959,96 @@ def padronizar_legendas_pt_br(dry_run=False):
             mudados.pop()
             print(f" [SISTEMA] Legenda pt-BR: não consegui marcar em {os.path.basename(real)} (em uso?), tento de novo depois: {e}")
     return mudados
+
+
+def _episodio_do_arquivo(animes, caminho):
+    """(chave, número em str) do episódio de um arquivo no padrão de nome, ou None."""
+    match = _PADRAO_NOME_ARQUIVO.match(os.path.basename(caminho))
+    if not match:
+        return None
+    titulo = _canonizar_titulo(match.group(1))
+    for chave, registro in animes.items():
+        if registro.get("interesse") != "sem_interesse" and _sanitizar_nome_arquivo(registro["titulo"]) == titulo:
+            return chave, str(int(match.group(2)))
+    return None
+
+
+def _baixar_de_novo_corrompido(animes, chave, numero, caminho):
+    """Arquivo ilegível vai para a Lixeira e o episódio volta para a fila.
+    Só uma vez por episódio: se o novo também vier ruim, vira alerta de falha
+    (`episodios_falha_download`) em vez de baixar em círculos."""
+    registro = animes[chave]
+    hoje = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if numero in registro.get("episodios_rebaixado_corrompido", {}):
+        _registrar_falha_download(chave, int(numero), "arquivo corrompido mesmo depois de baixar de novo")
+        return False
+    try:
+        _mandar_para_lixeira(caminho)
+    except OSError as e:
+        print(f" [SISTEMA] Episódio corrompido: não consegui tirar {os.path.basename(caminho)} (em uso?): {e}")
+        return False
+    # Sai de "baixado" ANTES da próxima varredura: senão o sumiço na pasta do
+    # anime finalizado viraria "assistido" (sincronizar_biblioteca_local).
+    registro.get("episodios", {}).pop(numero, None)
+    if numero in registro.get("episodios_na_pasta_do_anime", []):
+        registro["episodios_na_pasta_do_anime"].remove(numero)
+    registro.setdefault("episodios_rebaixado_corrompido", {})[numero] = hoje
+    _salvar_animes(animes)
+    print(f" [SISTEMA] 🎬 {registro['titulo']} Episódio {numero}: arquivo corrompido foi para a Lixeira, baixando de novo.")
+    baixar_episodio(chave, registro, int(numero))
+    return True
+
+
+def tratar_episodios_com_problema(limite=2):
+    """Episódio corrompido é baixado de novo; episódio "baixado" sem legenda
+    pt-BR é trocado por um release que tenha, quando existir.
+
+    🔥 2026-11-09, pedido do usuário depois de Megami no Café Terrace (.mkv
+    com cabeçalho zerado) e Tougen Anki E06 (rip sem português trocado à
+    mão). Só anime: séries e filmes são do midia_tracker e costumam ser
+    dublados. Trabalha sobre o que `padronizar_legendas_pt_br` anotou, no
+    máximo `limite` episódios por volta (cada um consulta a página do anime e
+    o nyaa). A procura por release com pt-BR repete 1x por dia por episódio
+    enquanto ele não for assistido. Chamar sob `lock_estado_animes`.
+    Devolve quantos downloads disparou."""
+    if not qbittorrent_configurado() or not (_episodios_corrompidos or _episodios_sem_pt_br):
+        return 0
+    animes = _carregar_animes()
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    disparados = 0
+    for caminho, real in list(_episodios_corrompidos.items()):
+        if disparados >= limite:
+            return disparados
+        _episodios_corrompidos.pop(caminho, None)
+        alvo = _episodio_do_arquivo(animes, real) if os.path.isfile(real) else None
+        if not alvo or animes[alvo[0]].get("episodios", {}).get(alvo[1]) != "baixado":
+            continue
+        if _baixar_de_novo_corrompido(animes, alvo[0], alvo[1], real):
+            disparados += 1
+            animes = _carregar_animes()
+    tentativas = 0
+    for caminho, real in list(_episodios_sem_pt_br.items()):
+        if disparados >= limite or tentativas >= limite:
+            return disparados
+        alvo = _episodio_do_arquivo(animes, real) if os.path.isfile(real) else None
+        if not alvo or animes[alvo[0]].get("episodios", {}).get(alvo[1]) != "baixado":
+            _episodios_sem_pt_br.pop(caminho, None)
+            continue
+        chave, numero = alvo
+        registro = animes[chave]
+        if numero in registro.get("downloads_em_andamento", {}) or registro.get("episodios_troca_pt_br_em", {}).get(numero) == hoje:
+            continue
+        registro.setdefault("episodios_troca_pt_br_em", {})[numero] = hoje
+        _salvar_animes(animes)
+        tentativas += 1
+        try:
+            if baixar_episodio(chave, registro, int(numero), substituir=real):
+                print(f" [SISTEMA] 🇧🇷 {registro['titulo']} Episódio {numero}: achei um release com legenda pt-BR, trocando.")
+                disparados += 1
+        except Exception as e:
+            print(f" [SISTEMA] Troca por pt-BR de {registro['titulo']} Episódio {numero} falhou: {e}")
+        animes = _carregar_animes()
+    return disparados
 
 
 # ======================================================
@@ -4128,7 +4300,7 @@ def limpar_assistidos_antigos(dry_run=False):
         match = _PADRAO_NOME_ARQUIVO.match(nome)
         if not match or not nome.lower().endswith(EXTENSOES_VIDEO) or not os.path.isfile(caminho):
             continue
-        episodios.setdefault(match.group(1), []).append((int(match.group(2)), caminho))
+        episodios.setdefault(_canonizar_titulo(match.group(1)), []).append((int(match.group(2)), caminho))
     apagados = []
     for titulo, lista in episodios.items():
         registro = por_titulo.get(titulo)

@@ -1,7 +1,8 @@
 """Teste: só o último episódio de cada anime fica na raiz da pasta de
 assistidos (2026-11-08, pedido do usuário: "a pasta E:\\Downloads\\Anime ta
 ficando meio poluida, quero q fique apenas o ultimo ep de cd anime").
-Usa uma pasta temporária; a Lixeira é trocada por uma lista."""
+Usa uma pasta temporária; a Lixeira é trocada por uma lista (a real não é
+usada em teste: cada execução deixava um arquivo na Lixeira do usuário)."""
 import os
 import shutil
 import sys
@@ -48,22 +49,6 @@ def testar_fica_so_o_ultimo():
         shutil.rmtree(pasta, ignore_errors=True)
 
 
-def testar_lixeira_real_do_windows():
-    if os.name != "nt":
-        return
-    import importlib
-    importlib.reload(at)
-    pasta = tempfile.mkdtemp()
-    try:
-        caminho = os.path.join(pasta, "Anime - S01E01.mkv")
-        open(caminho, "wb").write(b"x")
-        at._mandar_para_lixeira(caminho)
-        assert not os.path.exists(caminho)
-    finally:
-        shutil.rmtree(pasta, ignore_errors=True)
-
-
 if __name__ == "__main__":
     testar_fica_so_o_ultimo()
-    testar_lixeira_real_do_windows()
     print("OK")

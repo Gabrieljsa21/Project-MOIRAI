@@ -7,6 +7,21 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-09
+
+### Adicionado
+
+- **Episódio corrompido é baixado de novo (2026-11-09, caso real Megami no Café Terrace: `.mkv` com cabeçalho zerado)**: quando o ffprobe não consegue ler um episódio "baixado", o arquivo vai para a Lixeira e o episódio volta para a fila de download. Só uma vez por episódio: se o novo também vier ruim, vira alerta de falha em vez de baixar em círculos.
+- **Episódio sem legenda pt-BR é trocado por um release que tenha (2026-11-09, o que foi feito à mão com Tougen Anki E06)**: episódio "baixado" (ainda não assistido) com legendas em outros idiomas e nenhuma em português dispara uma procura, 1x por dia, por release com pt-BR confirmado e diferente do atual. O arquivo antigo só vai para a Lixeira quando o novo termina de baixar. Fansub com legenda na imagem ou faixa única sem idioma fica como está. Só anime: séries e filmes são do `midia_tracker` e costumam ser dublados.
+- **Backup diário do registro de animes**: antes da primeira gravação de cada dia, `anime_tracker_animes.json` é copiado para `data/backups/` (últimos 7 dias). A gravação passou a ser atômica (temporário + troca).
+
+### Alterado
+
+- **Nomes de arquivo reconhecidos sem diferenciar maiúsculas**: `_PADRAO_NOME_ARQUIVO` e o título lido do arquivo deixaram de depender da grafia exata. Um arquivo renomeado para minúsculas não some mais da biblioteca (causa do incidente da 0.5.0, em que episódios não vistos foram marcados como assistidos).
+- **Testes**: o teste da limpeza de assistidos não usa mais a Lixeira real do Windows.
+
+Coberto por `testes/testar_episodios_com_problema.py`.
+
 ## [0.7.0] - 2026-11-09
 
 ### Adicionado
