@@ -946,6 +946,52 @@ def adicionar_anime_manual(url):
     return chave, None
 
 
+_MAXIMO_RESULTADOS_BUSCA = 10
+
+
+def buscar_animes_no_site(termo):
+    """Pesquisa pelo nome na busca do próprio DarkMahou (`/?s=`).
+
+    🔥 2026-11-13, pedido do usuário: "moirai podia pesquisar os animes p
+    baixar em vez de pegar apenas o link direto" (caso real: Chitose-kun wa
+    Ramune Bin no Naka, temporada 1, já fora dos "Últimos lançamentos"). O
+    site já tolera caixa, acento e palavras soltas ("ramune bin" acha o
+    anime). Devolve (resultados, erro): cada resultado é {titulo, url,
+    capa_url, episodios, status, formato, ja_rastreado}, na ordem do site,
+    no máximo `_MAXIMO_RESULTADOS_BUSCA`."""
+    termo = " ".join((termo or "").split())
+    if not termo:
+        return [], "Digite o nome do anime."
+    try:
+        html = _obter_html_darkmahou(f"{URL_BASE}/?s={urllib.parse.quote_plus(termo)}")
+    except Exception as e:
+        return [], f"Erro ao pesquisar no DarkMahou: {e}"
+    rastreados = _carregar_animes()
+    resultados = []
+    for card in BeautifulSoup(html, "html.parser").select("article.dm-card"):
+        link = card.find("a", href=True)
+        titulo = card.find("h3")
+        if not link or not titulo or not link["href"].startswith(URL_BASE):
+            continue
+        img = card.find("img")
+        status = card.find("p")
+        episodios = card.select_one(".dm-episode")
+        formato = card.select_one(".dm-format")
+        chave = _chave_de_url(link["href"])
+        resultados.append({
+            "titulo": titulo.get_text(strip=True),
+            "url": link["href"],
+            "capa_url": img.get("src") if img else None,
+            "episodios": _numero_episodio_de_texto(episodios.get_text()) if episodios else None,
+            "status": status.get_text(strip=True) if status else "",
+            "formato": formato.get_text(strip=True) if formato else "",
+            "ja_rastreado": rastreados.get(chave, {}).get("interesse") == "tenho_interesse",
+        })
+        if len(resultados) >= _MAXIMO_RESULTADOS_BUSCA:
+            break
+    return resultados, None
+
+
 def formatar_texto_pendentes(pendentes):
     """Texto pronto pra notificar (Discord/log) - None se não há nada pendente hoje
     (mesmo padrão de "some do resumo, sem frase de aviso" já usado no Modo
