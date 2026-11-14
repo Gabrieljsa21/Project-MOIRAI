@@ -7,6 +7,12 @@ Histórico de alto nível do que muda no MOIRAI, por versão. Ver
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-13
+
+### Adicionado
+
+- **Busca de anime pelo nome (2026-11-13, pedido do usuário: "moirai podia pesquisar os animes p baixar em vez de pegar apenas o link direto"; caso real Chitose-kun wa Ramune Bin no Naka, temporada 1)**: `GET /anime/buscar?q=<nome>` usa a busca do próprio DarkMahou (`/?s=`) e devolve até 10 resultados com título, link, capa, episódios, status ("Concluído", "Em lançamento"), formato e se o anime já está em "Acompanhando". O site já tolera caixa, acento e palavras soltas. Coberto por `testes/testar_buscar_anime.py`.
+
 ## [0.8.0] - 2026-11-09
 
 ### Adicionado

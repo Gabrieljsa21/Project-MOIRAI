@@ -83,6 +83,10 @@ class _API(BaseHTTPRequestHandler):
                 {"titulo": titulo, "chave": chave, "capa_url": capa_url}
                 for titulo, chave, capa_url in anime_tracker.obter_titulos_para_assistir()
             ])
+        elif caminho == "/anime/buscar":
+            # 🔥 2026-11-13 - campo do "➕" no Assistente de Animes (GAIA).
+            resultados, erro = anime_tracker.buscar_animes_no_site((params.get("q") or [""])[0])
+            self._responder_json({"resultados": resultados, "erro": erro})
         elif caminho == "/anime/animes_rastreados":
             self._responder_json(dict(anime_tracker.obter_animes_rastreados()))
         elif caminho == "/midia/rastreados":

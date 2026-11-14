@@ -1015,6 +1015,18 @@ de forma atômica; `_PADRAO_NOME_ARQUIVO` virou `re.IGNORECASE` e
 `_canonizar_titulo` devolve o título na grafia do registro (mapa por
 `casefold`, refeito quando o JSON muda).
 
+## Busca de anime pelo nome (2026-11-13)
+
+`buscar_animes_no_site` faz GET em `{URL_BASE}/?s=<termo>` (termo com espaços
+colapsados e `quote_plus`) e lê os cards `article.dm-card` da página de
+resultado: `h3` é o título, `a[href]` a página, `img[src]` a capa, `.dm-episode`
+o total de episódios ("EP 13"), `.dm-format` o formato ("TV", "Filme") e o
+`p` o status. Link fora de `URL_BASE` (anúncio) é ignorado. `ja_rastreado`
+só vale para "tenho_interesse": anime marcado "sem interesse" pode ser
+escolhido de novo. A busca não grava nada; a escolha segue pelo caminho de
+sempre (`POST /anime/adicionar` com a URL, e depois o download), então todo
+o resto (seleção de episódios, filme direto) não mudou.
+
 ## Dados migrados (2026-08-24, verificados por checksum antes de remover da GAIA)
 
 `data/anime_tracker_animes.json` (estado de cada anime), `data/
